@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>samohi.fun</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-app-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-auth-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-firestore-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
+    <style>
+        body { transition: all 0.3s ease; }
+        body.dark { background-color: #1a1a1a; color: #ffffff; }
+        .dark .bg-white { background-color: #2d2d2d !important; }
+        .dark .text-gray-600 { color: #d1d1d1 !important; }
+        .dark .text-gray-500 { color: #a0a0a0 !important; }
+        .dark .border-gray-300 { border-color: #404040 !important; }
+        .tab-button { color: #000000; }
+        .dark .tab-button { color: #ffffff; }
+        .dark input { color: #ffffff; background-color: #404040; border-color: #606060; }
+        .dark input::placeholder { color: #808080; }
+        .dark .bg-gray-50 { background-color: #383838 !important; }
+        .canvas-container { 
+            width: 100%; 
+            height: 300px; 
+        }
+        .tab-button.selected {
+            background-color: #3b82f6;
+            color: white !important;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900">
+    <!-- Betting Modal -->
+    <div id="betting-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden animate__animated animate__fadeIn" style="z-index: 1000;">
+        <div class="flex items-center justify-center min-h-screen p-4">
+            <div class="bg-white dark:bg-gray-800 rounded-lg max-w-md w-full p-6 animate__animated animate__zoomIn">
+                <h3 class="text-xl font-bold mb-4 dark:text-white">Place Bet</h3>
+                <div id="modal-market-info" class="mb-4 text-sm text-gray-600 dark:text-gray-300"></div>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1 dark:text-white">Amount of Funbucks</label>
+                    <input type="number" id="bet-amount" min="1" value="10" step="1"
+                           class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white dark:border-gray-600">
+                </div>
+                <div id="bet-details" class="space-y-2 mb-4 text-sm text-gray-600 dark:text-gray-300"></div>
+                <div class="flex space-x-3">
+                    <button id="confirm-bet" class="flex-1 bg-blue-500 text-white p-2 rounded hover:bg-blue-600 transition-colors duration-300">
+                        Confirm
+                    </button>
+                    <button id="cancel-bet" class="flex-1 border border-gray-300 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-300 dark:text-white">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Auth Container -->
+    <div id="auth-container" class="min-h-screen flex items-center justify-center animate__animated animate__fadeIn">
+        <div class="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg w-96 animate__animated animate__zoomIn">
+            <h1 class="text-2xl font-bold text-center mb-6 dark:text-white">samohi.fun</h1>
+            <form id="auth-form" class="space-y-4">
+                <input type="email" id="email" placeholder="Email" required
+                       class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white dark:border-gray-600">
+                <input type="password" id="password" placeholder="Password" required
+                       class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white dark:border-gray-600">
+                <input type="text" id="username" placeholder="Username (Sign up only)" required
+                       class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white dark:border-gray-600 hidden">
+                <div id="error-message" class="text-red-500 hidden"></div>
+                <button type="submit" class="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 transition-colors duration-300">
+                    <span id="auth-button-text">Login</span>
+                </button>
+                <button type="button" id="toggle-auth" class="w-full text-sm text-gray-500 dark:text-gray-400">
+                    Don't have an account? Sign up
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main App Container -->
+    <div id="app-container" class="hidden animate__animated animate__fadeIn">
+        <header class="bg-white dark:bg-gray-800 shadow">
+            <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+                <div class="flex items-center space-x-4">
+                    <h1 class="text-2xl font-bold dark:text-white">samohi.fun</h1>
+                    <button id="theme-toggle" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-300">
+                        <svg id="sun-icon" class="w-6 h-6 hidden dark:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                        </svg>
+                        <svg id="moon-icon" class="w-6 h-6 dark:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <span id="username-display" class="font-medium dark:text-white"></span>
+                    <span id="networth-display" class="font-medium dark:text-white"></span>
+                    <span id="balance-display" class="font-medium dark:text-white"></span>
+                    <button id="logout-button" class="px-4 py-2 border rounded hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-300 dark:text-white dark:border-gray-600">
+                        Logout
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <nav class="max-w-7xl mx-auto px-4 py-4">
+            <div class="flex space-x-4">
+                <button class="tab-button selected" data-tab="home">Home</button>
+                <button class="tab-button" data-tab="portfolio">Portfolio</button>
+                <button class="tab-button" data-tab="asb">ASB</button>
+                <button class="tab-button" data-tab="sports">Sports</button>
+            </div>
+        </nav>
+
+        <main class="max-w-7xl mx-auto px-4 py-4">
+            <div id="home-tab" class="tab-content">
+                <div id="markets-container" class="space-y-6"></div>
+            </div>
+            
+            <div id="portfolio-tab" class="tab-content hidden">
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
+                    <div class="mb-6">
+                        <h2 class="text-xl font-bold dark:text-white">Portfolio Overview</h2>
+                        <div class="grid grid-cols-3 gap-4 mt-4">
+                            <div class="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                                <div class="text-sm text-gray-600 dark:text-gray-300">Total Networth</div>
+                                <div class="text-lg font-bold dark:text-white" id="portfolio-networth"></div>
+                            </div>
+                            <div class="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                                <div class="text-sm text-gray-600 dark:text-gray-300">Available Funbucks</div>
+                                <div class="text-lg font-bold dark:text-white" id="portfolio-balance"></div>
+                            </div>
+                            <div class="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                                <div class="text-sm text-gray-600 dark:text-gray-300">Active Bets Value</div>
+                                <div class="text-lg font-bold dark:text-white" id="portfolio-bets-value"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold mb-4 dark:text-white">Portfolio History</h3>
+                        <div class="canvas-container">
+                            <canvas id="portfolio-chart"></canvas>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold mb-4 dark:text-white">Active Bets</h3>
+                        <div id="portfolio-bets" class="space-y-4"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="asb-tab" class="tab-content hidden">
+                <div id="asb-markets" class="space-y-6"></div>
+            </div>
+
+            <div id="sports-tab" class="tab-content hidden">
+                <div id="sports-markets" class="space-y-6"></div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+    // Firebase config
+    const firebaseConfig = {
+        apiKey: "AIzaSyADfvM5G6E17VatDCZGt5WfyhrU2kJl2c0",
+        authDomain: "polyclone-charlito.firebaseapp.com",
+        projectId: "polyclone-charlito",
+        storageBucket: "polyclone-charlito.firebasestorage.app",
+        messagingSenderId: "33888100969",
+        appId: "1:33888100969:web:460f59f56be799600d38f8",
+        measurementId: "G-RLPKRSNF6Q"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    let chartInstances = {};
+    let currentUser = null;
+    let isLoginMode = true;
+    let portfolio = {
+        balance: 500,
+        bets: []
+    };
+
+    const sampleMarkets = [
+        {
+            id: 1,
+            title: "Will the Senior Class win Spirit Week?",
+            category: "ASB",
+            currentPrice: 0.65,
+            priceHistory: Array.from({length: 30}, (_, i) => ({
+                date: new Date(Date.now() - (29-i) * 24 * 60 * 60 * 1000),
+                price: 0.5 + Math.sin(i/5) * 0.2
+            }))
+        },
+        {
+            id: 2,
+            title: "Will Samohi Basketball win their next game?",
+            category: "Sports",
+            currentPrice: 0.78,
+            priceHistory: Array.from({length: 30}, (_, i) => ({
+                date: new Date(Date.now() - (29-i) * 24 * 60 * 60 * 1000),
+                price: 0.7 + Math.cos(i/4) * 0.15
+            }))
+        }
+    ];
+
+    function formatDate(date) {
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const d = new Date(date);
+        return `${months[d.getMonth()]} ${d.getDate()} (${d.getFullYear().toString().slice(2)})`;
+    }
+
+    function formatCurrency(amount) {
+        return `${amount.toFixed(2)} funbucks`;
+    }
+
+    function calculateNetworth() {
+        const activeBetsValue = portfolio.bets.reduce((total, bet) => {
+            const market = sampleMarkets.find(m => m.id === bet.marketId);
+            if (!market) return total;
+            
+            const currentPrice = bet.position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
+            return total + (bet.shares * currentPrice);
+        }, 0);
+
+        return portfolio.balance + activeBetsValue;
+    }
+
+    function updatePortfolioDisplays() {
+        const networth = calculateNetworth();
+        const betsValue = networth - portfolio.balance;
+
+        document.getElementById('balance-display').textContent = `Balance: ${formatCurrency(portfolio.balance)}`;
+        document.getElementById('networth-display').textContent = `Networth: ${formatCurrency(networth)}`;
+        document.getElementById('portfolio-networth').textContent = formatCurrency(networth);
+        document.getElementById('portfolio-balance').textContent = formatCurrency(portfolio.balance);
+        document.getElementById('portfolio-bets-value').textContent = formatCurrency(betsValue);
+    }
+
+    function destroyChart(chartId) {
+        if (chartInstances[chartId]) {
+            chartInstances[chartId].destroy();
+            delete chartInstances[chartId];
+        }
+    }
+
+    function createChart(ctx, market, darkMode = document.body.classList.contains('dark')) {
+        const chartId = ctx.canvas.id;
+        destroyChart(chartId);
+
+        const gridColor = darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+        const textColor = darkMode ? '#fff' : '#000';
+
+        chartInstances[chartId] = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: market.priceHistory.map(p => formatDate(p.date)),
+                datasets: [{
+                    label: 'Price',
+                    data: market.priceHistory.map(p => p.price),
+                    borderColor: '#3b82f6',
+                    tension: 0.1,
+                    pointRadius: 3,
+                    pointHoverRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                scales: {
+                    y: {
+                        min: 0,
+                        max: 1,
+                        grid: {
+                            color: gridColor
+                        },
+                        ticks: {
+                            color: textColor
+                        }
+                    },
+                    x: {
+                        grid: {
+                            color: gridColor
+                        },
+                        ticks: {
+                            color: textColor
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        backgroundColor: darkMode ? 'rgba(0, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.8)',
+                        titleColor: darkMode ? '#fff' : '#000',
+                        bodyColor: darkMode ? '#fff' : '#000',
+                        displayColors: false,
+                        padding: 10,
+                        cornerRadius: 4
+                    }
+                }
+            }
+        });
+
+        return chartInstances[chartId];
+    }
+
+    function updatePortfolioChart() {
+        const ctx = document.getElementById('portfolio-chart')?.getContext('2d');
+        if (!ctx) return;
+
+        const portfolioHistory = [{
+            date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+            value: 500
+        }];
+
+        portfolio.bets.forEach(bet => {
+            portfolioHistory.push({
+                date: bet.date,
+                value: calculateNetworth()
+            });
+        });
+
+        createChart(ctx, {
+            priceHistory: portfolioHistory.map(h => ({
+                date: h.date,
+                price: h.value
+            }))
+        });
+    }
+
+    function createMarketCard(market) {
+        const card = document.createElement('div');
+        card.className = 'bg-white dark:bg-gray-800 rounded-lg shadow p-6 animate__animated animate__fadeInUp market-card';
+        card.dataset.marketId = market.id;
+        
+        const marketJson = JSON.stringify(market).replace(/'/g, '&#39;');
+        
+        card.innerHTML = `
+            <h3 class="text-xl font-bold dark:text-white">${market.title}</h3>
+            <p class="text-gray-500 dark:text-gray-400">${market.category}</p>
+            <div class="canvas-container my-4">
+                <canvas id="chart-${market.id}"></canvas>
+            </div>
+            <div class="flex justify-between items-center">
+                <div class="text-lg font-semibold dark:text-white">Current Price: $${market.currentPrice.toFixed(2)}</div>
+                <div class="space-x-2">
+                    <button onclick='showBettingModal(${marketJson}, "yes")' 
+                            class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition-all duration-300 transform hover:scale-105">
+                        Buy Yes ($${market.currentPrice.toFixed(2)})
+                    </button>
+                    <button onclick='showBettingModal(${marketJson}, "no")' 
+                            class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-all duration-300 transform hover:scale-105">
+                        Buy No ($${(1 - market.currentPrice).toFixed(2)})
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        setTimeout(() => {
+            const ctx = card.querySelector(`#chart-${market.id}`)?.getContext('2d');
+            if (ctx) {
+                createChart(ctx, market);
+            }
+        }, 0);
+
+        return card;
+    }
+
+    function showBettingModal(market, position) {
+        const modal = document.getElementById('betting-modal');
+        const marketInfo = document.getElementById('modal-market-info');
+        const betAmount = document.getElementById('bet-amount');
+        const betDetails = document.getElementById('bet-details');
+        const price = position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
+
+        function updateBetDetails() {
+            const amount = parseFloat(betAmount.value) || 0;
+            const shares = Math.floor(amount / price);
+            const actualCost = shares * price;
+            const potentialPayout = shares;
+
+            betDetails.innerHTML = `
+                <div>Shares: ${shares}</div>
+                <div>Cost: $${actualCost.toFixed(2)}</div>
+                <div>Potential Payout: $${potentialPayout.toFixed(2)}</div>
+            `;
+        }
+
+        marketInfo.innerHTML = `
+            <div class="mb-2 font-medium">${market.title}</div>
+            <div>Position: ${position} @ $${price.toFixed(2)}</div>
+        `;
+
+        betAmount.value = "10";
+        betAmount.max = portfolio.balance;
+        betAmount.addEventListener('input', updateBetDetails);
+        updateBetDetails();
+
+        modal.classList.remove('hidden');
+
+        const confirmBet = () => {
+            const amount = parseFloat(betAmount.value) || 0;
+            const shares = Math.floor(amount / price);
+            const actualCost = shares * price;
+
+            if (actualCost > portfolio.balance) {
+                alert('Insufficient funds');
+                return;
+            }
+
+            portfolio.balance -= actualCost;
+            portfolio.bets.push({
+                marketId: market.id,
+                position,
+                shares,
+                cost: actualCost,
+                entryPrice: price,
+                date: new Date()
+            });
+
+            updatePortfolioDisplays();
+            modal.classList.add('hidden');
+            
+            if (!document.getElementById('portfolio-tab').classList.contains('hidden')) {
+                updatePortfolioChart();
+            }
+        };
+
+        document.getElementById('confirm-bet').onclick = confirmBet;
+        document.getElementById('cancel-bet').onclick = () => {
+            modal.classList.add('hidden');
+        };
+    }
+
+    function updateMarkets() {
+        const marketsContainer = document.getElementById('markets-container');
+        const asbMarkets = document.getElementById('asb-markets');
+        const sportsMarkets = document.getElementById('sports-markets');
+        
+        marketsContainer.innerHTML = '';
+        asbMarkets.innerHTML = '';
+        sportsMarkets.innerHTML = '';
+        
+        sampleMarkets.forEach(market => {
+            marketsContainer.appendChild(createMarketCard(market));
+            if (market.category === 'ASB') {
+                asbMarkets.appendChild(createMarketCard(market));
+            } else if (market.category === 'Sports') {
+                sportsMarkets.appendChild(createMarketCard(market));
+            }
+        });
+    }
+
+    // Event Listeners
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+        document.body.classList.toggle('dark');
+        const sunIcon = document.getElementById('sun-icon');
+        const moonIcon = document.getElementById('moon-icon');
+        
+        if (document.body.classList.contains('dark')) {
+            moonIcon.classList.add('hidden');
+            sunIcon.classList.remove('hidden');
+        } else {
+            sunIcon.classList.add('hidden');
+            moonIcon.classList.remove('hidden');
+        }
+
+        // Recreate all visible charts with new theme
+        const visibleContainer = Array.from(document.querySelectorAll('.tab-content'))
+            .find(el => !el.classList.contains('hidden'));
+            
+        if (visibleContainer) {
+            const canvases = visibleContainer.querySelectorAll('canvas');
+            canvases.forEach(canvas => {
+                const ctx = canvas.getContext('2d');
+                const marketId = canvas.id.replace('chart-', '');
+                const market = sampleMarkets.find(m => m.id === parseInt(marketId));
+                if (market) {
+                    createChart(ctx, market);
+                } else if (canvas.id === 'portfolio-chart') {
+                    updatePortfolioChart();
+                }
+            });
+        }
+    });
+
+    document.getElementById('toggle-auth').addEventListener('click', () => {
+        isLoginMode = !isLoginMode;
+        const usernameInput = document.getElementById('username');
+        const authButtonText = document.getElementById('auth-button-text');
+        const toggleAuth = document.getElementById('toggle-auth');
+
+        if (isLoginMode) {
+            usernameInput.classList.add('hidden');
+            authButtonText.textContent = 'Login';
+            toggleAuth.textContent = "Don't have an account? Sign up";
+        } else {
+            usernameInput.classList.remove('hidden');
+            authButtonText.textContent = 'Sign Up';
+            toggleAuth.textContent = "Already have an account? Login";
+        }
+    });
+
+    document.getElementById('auth-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        const errorMessage = document.getElementById('error-message');
+
+        try {
+            if (isLoginMode) {
+                await auth.signInWithEmailAndPassword(email, password);
+            } else {
+                const username = document.getElementById('username').value;
+                const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                await db.collection('users').doc(userCredential.user.uid).set({
+                    username,
+                    funbucks: 500,
+                    createdAt: new Date().toISOString()
+                });
+            }
+        } catch (error) {
+            errorMessage.textContent = error.message;
+            errorMessage.classList.remove('hidden');
+        }
+    });
+
+    document.getElementById('logout-button').addEventListener('click', () => {
+        auth.signOut();
+    });
+
+    document.querySelectorAll('.tab-button').forEach(button => {
+        button.addEventListener('click', () => {
+            document.querySelectorAll('.tab-button').forEach(b => {
+                b.classList.remove('selected');
+                b.classList.remove('animate__animated', 'animate__pulse');
+            });
+            button.classList.add('selected');
+            button.classList.add('animate__animated', 'animate__pulse');
+            
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.add('hidden');
+                content.classList.remove('animate__animated', 'animate__fadeIn');
+            });
+
+            const tab = document.getElementById(`${button.dataset.tab}-tab`);
+            tab.classList.remove('hidden');
+            tab.classList.add('animate__animated', 'animate__fadeIn');
+
+            // Update content based on tab
+            if (button.dataset.tab === 'portfolio') {
+                updatePortfolioChart();
+                updatePortfolioDisplays();
+            } else {
+                if (button.dataset.tab === 'home') {
+                    const container = document.getElementById('markets-container');
+                    container.innerHTML = '';
+                    sampleMarkets.forEach(market => {
+                        container.appendChild(createMarketCard(market));
+                    });
+                } else if (button.dataset.tab === 'asb' || button.dataset.tab === 'sports') {
+                    const container = document.getElementById(`${button.dataset.tab}-markets`);
+                    container.innerHTML = '';
+                    sampleMarkets
+                        .filter(m => m.category.toLowerCase() === button.dataset.tab.toLowerCase())
+                        .forEach(market => {
+                            container.appendChild(createMarketCard(market));
+                        });
+                }
+            }
+        });
+    });
+
+    auth.onAuthStateChanged(async (user) => {
+        if (user) {
+            try {
+                const userDoc = await db.collection('users').doc(user.uid).get();
+                if (userDoc.exists) {
+                    currentUser = { ...user, ...userDoc.data() };
+                    portfolio.balance = currentUser.funbucks;
+                } else {
+                    currentUser = { ...user, username: user.email, funbucks: 500 };
+                    portfolio.balance = 500;
+                }
+
+                document.getElementById('auth-container').classList.add('hidden');
+                document.getElementById('app-container').classList.remove('hidden');
+                document.getElementById('username-display').textContent = currentUser.username;
+                updatePortfolioDisplays();
+                updateMarkets();
+            } catch (error) {
+                console.error('Error loading user data:', error);
+                // Fallback to basic user data if offline
+                currentUser = { ...user, username: user.email, funbucks: 500 };
+                portfolio.balance = 500;
+                
+                document.getElementById('auth-container').classList.add('hidden');
+                document.getElementById('app-container').classList.remove('hidden');
+                document.getElementById('username-display').textContent = currentUser.username;
+                updatePortfolioDisplays();
+                updateMarkets();
+            }
+        } else {
+            currentUser = null;
+            portfolio = { balance: 500, bets: [] };
+            document.getElementById('auth-container').classList.remove('hidden');
+            document.getElementById('app-container').classList.add('hidden');
+            
+            // Reset forms
+            document.getElementById('auth-form').reset();
+            document.getElementById('error-message').classList.add('hidden');
+        }
+    });
+
+    const style = document.createElement('style');
+    style.textContent = `
+        .tab-button {
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            transition: all 0.2s;
+        }
+        .tab-button:hover {
+            background-color: #f3f4f6;
+            transform: translateY(-2px);
+        }
+        .dark .tab-button:hover {
+            background-color: #374151;
+        }
+        .animate__animated {
+            animation-duration: 0.5s;
+        }
+        .transform {
+            transition: transform 0.2s;
+        }
+        .hover\\:scale-105:hover {
+            transform: scale(1.05);
+        }
+    `;
+    document.head.appendChild(style);
+    </script>
+</body>
+</html>
