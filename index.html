@@ -142,8 +142,16 @@
                 <button class="tab-button px-6 py-2 rounded-full" data-tab="portfolio">Portfolio</button>
                 <button class="tab-button px-6 py-2 rounded-full" data-tab="asb">ASB</button>
                 <button class="tab-button px-6 py-2 rounded-full" data-tab="sports">Sports</button>
+                <button class="tab-button px-6 py-2 rounded-full" data-tab="leaderboard">Leaderboard</button>
             </div>
         </nav>
+        
+        <div id="leaderboard-tab" class="tab-content hidden">
+            <div class="market-card p-6 rounded-lg">
+                <h2 class="text-2xl font-bold mb-6 text-blue-300">Leaderboard</h2>
+                <div id="leaderboard-list" class="space-y-4"></div>
+            </div>
+        </div>
 
         <main class="max-w-7xl mx-auto px-4 py-4">
             <div id="home-tab" class="tab-content">
@@ -554,18 +562,22 @@ function updatePortfolioChart() {
     const ctx = document.getElementById('portfolio-chart')?.getContext('2d');
     if (!ctx) return;
 
-    const data = [
-        {
+    const historyData = portfolio.history.map(item => ({
+        date: new Date(item.date),
+        value: item.value
+    })).sort((a, b) => a.date - b.date);
+
+    if (historyData.length === 0) {
+        historyData.unshift({
             date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
             value: 500
-        },
-        ...portfolio.history
-    ];
+        });
+    }
 
     createChart(ctx, {
-        priceHistory: data.map(d => ({
-            date: d.date,
-            price: d.value
+        priceHistory: historyData.map(item => ({
+            date: item.date,
+            price: item.value
         }))
     });
 }
@@ -611,7 +623,7 @@ function createMarketCard(market) {
         </div>
         <div class="grid grid-cols-2 gap-4">
             <button onclick="event.stopPropagation(); showBettingModal(${market.id}, 'yes')" 
-                    class="bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700">
+                    class="bg-green-600 text-white py-2 px-4 rounded hover:bg-green-700">
                 Buy Yes ($${market.currentPrice.toFixed(2)})
             </button>
             <button onclick="event.stopPropagation(); showBettingModal(${market.id}, 'no')" 
@@ -648,7 +660,7 @@ function updatePortfolioBets() {
     const portfolioBets = document.getElementById('portfolio-bets');
     if (!portfolioBets) return;
 
-    portfolioBets.innerHTML = portfolio.bets.map(bet => {
+    portfolioBets.innerHTML = portfolio.bets.map((bet, index) => {
         const market = sampleMarkets.find(m => m.id === bet.marketId);
         if (!market) return '';
         
@@ -660,12 +672,15 @@ function updatePortfolioBets() {
             <div class="bg-gray-800 p-4 rounded-lg border border-blue-900">
                 <div class="flex items-center gap-4 mb-3">
                     <img src="${market.image}" class="w-16 h-16 rounded object-cover">
-                    <div>
+                    <div class="flex-grow">
                         <div class="font-medium ${positionColor}">${market.title}</div>
                         <div class="text-sm text-gray-400">
                             Position: ${bet.position} @ $${bet.entryPrice.toFixed(2)}
                         </div>
                     </div>
+                    <button onclick="showSellConfirmation(${index})" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                        Sell
+                    </button>
                 </div>
                 <div class="grid grid-cols-2 gap-4 mt-3">
                     <div>
@@ -694,6 +709,250 @@ function updatePortfolioBets() {
         `;
     }).join('');
 }
+async function sellBet(betIndex) {
+    const bet = portfolio.bets[betIndex];
+    const market = sampleMarkets.find(m => m.id === bet.marketId);
+    if (!market || !bet) return;
+
+    const currentPrice = bet.position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
+    const sellValue = bet.shares * currentPrice;
+
+    try {
+        portfolio.balance += sellValue;
+        portfolio.bets.splice(betIndex, 1);
+        portfolio.history.push({
+            date: new Date().toISOString(),
+            value: calculateNetworth()
+        });
+
+        await updateUserData();
+        document.querySelector('.fixed').remove();
+        updatePortfolioDisplays();
+        showSellSuccessMessage(sellValue);
+    } catch (error) {
+        console.error('Error selling bet:', error);
+        alert('Error selling bet. Please try again.');
+    }
+}
+
+function showSellConfirmation(betIndex) {
+    const bet = portfolio.bets[betIndex];
+    const market = sampleMarkets.find(m => m.id === bet.marketId);
+    if (!market || !bet) return;
+
+    const currentPrice = bet.position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
+    const sellValue = bet.shares * currentPrice;
+    const priceChange = ((currentPrice - bet.entryPrice) / bet.entryPrice) * 100;
+    const priceChangeClass = priceChange >= 0 ? 'text-green-400' : 'text-red-400';
+
+    const confirmation = document.createElement('div');
+    confirmation.className = 'fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50';
+    confirmation.innerHTML = `
+        <div class="confirmation-modal p-6 rounded-lg shadow-lg max-w-md w-full">
+            <h3 class="text-xl font-bold mb-4 text-blue-300">Confirm Sale</h3>
+            <img src="${market.image}" class="w-full h-32 object-cover rounded mb-4">
+            <div class="mb-4">
+                <div class="text-gray-300 mb-2">${market.title}</div>
+                <div class="text-blue-300">Original Purchase: ${formatCurrency(bet.amount)}</div>
+                <div class="text-blue-300">Shares: ${bet.shares.toFixed(2)}</div>
+                <div class="${priceChangeClass}">
+                    Sale Value: ${formatCurrency(sellValue)} (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)
+                </div>
+            </div>
+            <div class="flex space-x-3">
+                <button onclick="sellBet(${betIndex})" class="flex-1 bg-red-600 text-white p-2 rounded hover:bg-red-700">
+                    Confirm Sale
+                </button>
+                <button onclick="this.closest('.fixed').remove()" class="flex-1 border border-blue-500 text-blue-400 p-2 rounded hover:bg-blue-900">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(confirmation);
+}
+
+function showSellSuccessMessage(sellValue) {
+    const message = document.createElement('div');
+    message.className = 'fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50';
+    message.innerHTML = `
+        <div class="confirmation-modal p-6 rounded-lg shadow-lg max-w-md w-full">
+            <div class="text-xl font-bold mb-4 text-green-400">Bet Sold Successfully!</div>
+            <div class="mb-4">
+                <div class="text-blue-300">You received: ${formatCurrency(sellValue)}</div>
+                <div class="text-gray-300">Your new balance: ${formatCurrency(portfolio.balance)}</div>
+            </div>
+            <button onclick="this.closest('.fixed').remove()" class="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700">
+                Close
+            </button>
+        </div>
+    `;
+
+    document.body.appendChild(message);
+}
+async function updateLeaderboard() {
+    const leaderboardList = document.getElementById('leaderboard-list');
+    if (!leaderboardList) return;
+
+    try {
+        const snapshot = await db.collection('users')
+            .orderBy('funbucks', 'desc')
+            .limit(20)
+            .get();
+        const leaders = await Promise.all(snapshot.docs.map(async doc => {
+            try {
+                const userRecord = await firebase.auth().getUser(doc.id);
+                return {
+                    id: doc.id,
+                    ...doc.data()
+                };
+            } catch (error) {
+                return null;
+            }
+        }));
+
+        const validLeaders = leaders.filter(leader => leader !== null).slice(0, 10);
+
+        leaderboardList.innerHTML = validLeaders.map((user, index) => `
+            <div class="bg-gray-800 p-6 rounded-lg border border-blue-900 cursor-pointer hover:border-blue-500 transition-colors mb-6"
+                 onclick="showUserProfile('${user.id}')">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-4">
+                        <div class="text-2xl font-bold ${index < 3 ? 'text-yellow-400' : 'text-gray-400'}">#${index + 1}</div>
+                        <div>
+                            <div class="font-medium text-blue-300">${user.username}</div>
+                            <div class="text-green-400">${formatCurrency(user.funbucks)}</div>
+                        </div>
+                    </div>
+                    <div class="text-gray-400">
+                        ${user.bets?.length || 0} Bets
+                    </div>
+                </div>
+                <div class="h-32">
+                    <canvas id="user-chart-${user.id}"></canvas>
+                </div>
+            </div>
+        `).join('');
+
+        validLeaders.forEach(user => {
+            const ctx = document.getElementById(`user-chart-${user.id}`)?.getContext('2d');
+            if (!ctx) return;
+
+            const historyData = (user.history || [])
+                .map(item => ({
+                    date: new Date(item.date),
+                    value: item.value
+                }))
+                .sort((a, b) => a.date - b.date);
+
+            if (historyData.length === 0) {
+                historyData.push({
+                    date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+                    value: 500
+                });
+            }
+
+            createChart(ctx, {
+                priceHistory: historyData.map(item => ({
+                    date: item.date,
+                    price: item.value
+                }))
+            });
+        });
+
+    } catch (error) {
+        console.error('Error updating leaderboard:', error);
+        leaderboardList.innerHTML = '<div class="text-red-400">Error loading leaderboard</div>';
+    }
+}
+
+async function showUserProfile(userId) {
+    try {
+        const userDoc = await db.collection('users').doc(userId).get();
+        if (!userDoc.exists) return;
+        
+        const userData = userDoc.data();
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50';
+        
+        const betsHtml = userData.bets?.map(bet => {
+            const market = sampleMarkets.find(m => m.id === bet.marketId);
+            if (!market) return '';
+            
+            return `
+                <div class="bg-gray-800 p-3 rounded border border-blue-900">
+                    <div class="font-medium ${bet.position === 'yes' ? 'text-green-400' : 'text-red-400'}">
+                        ${market.title}
+                    </div>
+                    <div class="text-sm text-gray-400">
+                        Position: ${bet.position} @ $${bet.entryPrice.toFixed(2)}
+                    </div>
+                    <div class="text-sm text-blue-300">
+                        Amount: ${formatCurrency(bet.amount)}
+                    </div>
+                    <div class="text-sm text-gray-400">
+                        Placed: ${formatDate(bet.date)}
+                    </div>
+                </div>
+            `;
+        }).join('') || '<div class="text-gray-400">No bets placed yet</div>';
+
+        modal.innerHTML = `
+            <div class="confirmation-modal p-6 rounded-lg shadow-lg max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-xl font-bold text-blue-300">${userData.username}'s Profile</h3>
+                    <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-white">✕</button>
+                </div>
+                <div class="mb-4">
+                    <div class="text-gray-400">Balance</div>
+                    <div class="text-2xl font-bold text-green-400">${formatCurrency(userData.funbucks)}</div>
+                </div>
+                <div class="mb-6">
+                    <h4 class="text-lg font-semibold mb-3 text-blue-300">Portfolio History</h4>
+                    <div class="h-64">
+                        <canvas id="profile-chart-${userId}"></canvas>
+                    </div>
+                </div>
+                <div>
+                    <h4 class="text-lg font-semibold mb-3 text-blue-300">Bet History</h4>
+                    <div class="space-y-2">
+                        ${betsHtml}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const ctx = document.getElementById(`profile-chart-${userId}`)?.getContext('2d');
+        if (ctx) {
+            const historyData = (userData.history || [])
+                .map(item => ({
+                    date: new Date(item.date),
+                    value: item.value
+                }))
+                .sort((a, b) => a.date - b.date);
+
+            if (historyData.length === 0) {
+                historyData.push({
+                    date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+                    value: 500
+                });
+            }
+
+            createChart(ctx, {
+                priceHistory: historyData.map(item => ({
+                    date: item.date,
+                    price: item.value
+                }))
+            });
+        }
+    } catch (error) {
+        console.error('Error showing user profile:', error);
+    }
+}
+
 
 document.getElementById('toggle-auth').addEventListener('click', () => {
     isLoginMode = !isLoginMode;
@@ -810,6 +1069,8 @@ document.querySelectorAll('.tab-button').forEach(button => {
         } else if (button.dataset.tab === 'portfolio') {
             updatePortfolioChart();
             updatePortfolioDisplays();
+        } else if (button.dataset.tab === 'leaderboard') {
+            updateLeaderboard();
         }
     });
 });
