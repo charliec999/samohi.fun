@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
+    <link rel="icon" type="image/png" href="https://i.imgur.com/yk2Y2yV.png">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>samohi.fun</title>
@@ -666,7 +667,29 @@ function updatePortfolioBets() {
                         </div>
                     </div>
                 </div>
-                <!-- Rest of the bet card content remains the same -->
+                <div class="grid grid-cols-2 gap-4 mt-3">
+                    <div>
+                        <div class="text-sm text-gray-400">Purchase Amount:</div>
+                        <div class="text-blue-300">${formatCurrency(bet.amount)}</div>
+                    </div>
+                    <div>
+                        <div class="text-sm text-gray-400">Shares:</div>
+                        <div class="text-blue-300">${bet.shares.toFixed(2)}</div>
+                    </div>
+                    <div>
+                        <div class="text-sm text-gray-400">Current Value:</div>
+                        <div class="${priceChangeClass}">
+                            ${formatCurrency(currentValue)} (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)
+                        </div>
+                    </div>
+                    <div>
+                        <div class="text-sm text-gray-400">Potential Payout:</div>
+                        <div class="text-blue-300">${formatCurrency(potentialPayout)}</div>
+                    </div>
+                </div>
+                <div class="text-sm text-gray-400 mt-3">
+                    Placed: ${formatDate(bet.date)}
+                </div>
             </div>
         `;
     }).join('');
