@@ -970,47 +970,59 @@ document.getElementById('auth-form').addEventListener('submit', async (e) => {
     try {
         if (isLoginMode) {
             const userCredential = await auth.signInWithEmailAndPassword(email, password);
-            const storedData = localStorage.getItem(`userData_${userCredential.user.uid}`);
+            const userDoc = await db.collection('users').doc(userCredential.user.uid).get();
             
-            if (storedData) {
-                const userData = JSON.parse(storedData);
+            if (userDoc.exists) {
+                const userData = userDoc.data();
                 portfolio.balance = userData.funbucks || 500;
                 portfolio.bets = userData.bets || [];
                 portfolio.history = userData.history || [{
                     date: new Date().toISOString(),
                     value: portfolio.balance
                 }];
-                currentUser = { ...userCredential.user, ...userData };
+                currentUser = { 
+                    ...userCredential.user, 
+                    ...userData,
+                    username: userData.username 
+                };
+                
+                document.getElementById('username-display').textContent = userData.username;
+                document.getElementById('auth-container').classList.add('hidden');
+                document.getElementById('app-container').classList.remove('hidden');
+                updatePortfolioDisplays();
+                updateMarkets();
             }
-            
-            document.getElementById('username-display').textContent = currentUser.username || email.split('@')[0];
-            document.getElementById('auth-container').classList.add('hidden');
-            document.getElementById('app-container').classList.remove('hidden');
-            updatePortfolioDisplays();
-            updateMarkets();
         } else {
             if (!username) {
                 throw new Error('Username is required');
             }
             
             const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+            
             const initialData = {
-                username,
+                username: username,
                 funbucks: 500,
                 bets: [],
                 history: [{
                     date: new Date().toISOString(),
                     value: 500
-                }]
+                }],
+                createdAt: new Date().toISOString()
             };
             
-            localStorage.setItem(`userData_${userCredential.user.uid}`, JSON.stringify(initialData));
+            await db.collection('users').doc(userCredential.user.uid).set(initialData);
+            
             portfolio = {
                 balance: initialData.funbucks,
                 bets: initialData.bets,
                 history: initialData.history
             };
-            currentUser = { ...userCredential.user, ...initialData };
+            
+            currentUser = { 
+                ...userCredential.user, 
+                ...initialData,
+                username: username 
+            };
             
             document.getElementById('username-display').textContent = username;
             document.getElementById('auth-container').classList.add('hidden');
