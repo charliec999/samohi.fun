@@ -798,23 +798,15 @@ async function updateLeaderboard() {
     try {
         const snapshot = await db.collection('users')
             .orderBy('funbucks', 'desc')
-            .limit(20)
+            .limit(10)
             .get();
-        const leaders = await Promise.all(snapshot.docs.map(async doc => {
-            try {
-                const userRecord = await firebase.auth().getUser(doc.id);
-                return {
-                    id: doc.id,
-                    ...doc.data()
-                };
-            } catch (error) {
-                return null;
-            }
+
+        const leaders = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
         }));
 
-        const validLeaders = leaders.filter(leader => leader !== null).slice(0, 10);
-
-        leaderboardList.innerHTML = validLeaders.map((user, index) => `
+        leaderboardList.innerHTML = leaders.map((user, index) => `
             <div class="bg-gray-800 p-6 rounded-lg border border-blue-900 cursor-pointer hover:border-blue-500 transition-colors mb-6"
                  onclick="showUserProfile('${user.id}')">
                 <div class="flex items-center justify-between mb-4">
@@ -835,7 +827,8 @@ async function updateLeaderboard() {
             </div>
         `).join('');
 
-        validLeaders.forEach(user => {
+        // Create charts for each user
+        leaders.forEach(user => {
             const ctx = document.getElementById(`user-chart-${user.id}`)?.getContext('2d');
             if (!ctx) return;
 
