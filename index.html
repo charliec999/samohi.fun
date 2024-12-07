@@ -700,49 +700,19 @@ async function createMarket() {
     }
 }
 function showSuccessMessage(message) {
-    const modal = document.createElement('div');
-    modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50';
-    modal.innerHTML = `
-        <div class="bg-gray-900 rounded-xl p-6 max-w-md w-full">
-            <div class="flex items-center gap-3 mb-4">
-                <div class="bg-green-500/20 p-3 rounded-full">
-                    <svg class="w-6 h-6 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                    </svg>
-                </div>
-                <h3 class="text-xl font-bold text-green-400">Success</h3>
-            </div>
-            <p class="text-gray-300 mb-6">${message}</p>
-            <button onclick="this.closest('.fixed').remove()" 
-                    class="w-full bg-green-600 hover:bg-green-700 text-white p-3 rounded-lg transition-all">
-                Close
-            </button>
-        </div>
-    `;
-    document.body.appendChild(modal);
+    const toast = document.createElement('div');
+    toast.className = 'fixed bottom-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg animate__animated animate__fadeInUp';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
 }
 
 function showErrorMessage(message) {
-    const modal = document.createElement('div');
-    modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50';
-    modal.innerHTML = `
-        <div class="bg-gray-900 rounded-xl p-6 max-w-md w-full">
-            <div class="flex items-center gap-3 mb-4">
-                <div class="bg-red-500/20 p-3 rounded-full">
-                    <svg class="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                    </svg>
-                </div>
-                <h3 class="text-xl font-bold text-red-400">Error</h3>
-            </div>
-            <p class="text-gray-300 mb-6">${message}</p>
-            <button onclick="this.closest('.fixed').remove()" 
-                    class="w-full bg-red-600 hover:bg-red-700 text-white p-3 rounded-lg transition-all">
-                Close
-            </button>
-        </div>
-    `;
-    document.body.appendChild(modal);
+    const toast = document.createElement('div');
+    toast.className = 'fixed bottom-4 right-4 bg-red-500 text-white px-6 py-3 rounded-lg shadow-lg animate__animated animate__fadeInUp';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
 }
 async function loadAdminMarkets() {
     const marketsContainer = document.getElementById('admin-markets-list');
@@ -1039,6 +1009,40 @@ filterButtons.forEach(button => {
         filterMarkets();
     });
 });
+
+document.querySelectorAll('.filter-btn').forEach(button => {
+    button.addEventListener('click', () => {
+        // Remove active class from all buttons
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        
+        // Add active class to clicked button
+        button.classList.add('active');
+        
+        // Get selected category
+        const category = button.dataset.category;
+        
+        // Filter markets
+        filterMarketsByCategory(category);
+    });
+});
+
+function filterMarketsByCategory(category) {
+    const container = document.getElementById('markets-container');
+    if (!container) return;
+    
+    container.innerHTML = ''; // Clear current markets
+    
+    const filteredMarkets = category === 'all' 
+        ? markets 
+        : markets.filter(market => market.category === category);
+    
+    filteredMarkets.forEach(market => {
+        container.appendChild(createMarketCard(market));
+    });
+}
+
 class UserDataStore {
     constructor() {
         this.db = null;
@@ -1101,13 +1105,24 @@ async function updateUserData() {
     if (!auth.currentUser) return;
     
     try {
-        await db.collection('users').doc(auth.currentUser.uid).set({
+        const userData = {
             username: currentUser.username,
+            email: currentUser.email,
             funbucks: portfolio.balance,
-            bets: portfolio.bets,
-            history: portfolio.history,
+            bets: portfolio.bets || [],
+            history: portfolio.history || [{
+                date: new Date().toISOString(),
+                value: portfolio.balance
+            }],
             lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
+        };
+
+        await db.collection('users').doc(auth.currentUser.uid).set(userData, { merge: true });
+        
+        // Update local storage as backup
+        localStorage.setItem('userData', JSON.stringify(userData));
+        
+        return true;
     } catch (error) {
         console.error('Error updating user data:', error);
         throw error;
@@ -1129,31 +1144,6 @@ function calculateBetValue(bet) {
         potentialPayout,
         priceChange24h,
         priceChange: ((currentPrice - bet.entryPrice) / bet.entryPrice) * 100
-    };
-}
-
-function showConfirmation(market, amount, position, shares) {
-    const confirmation = document.createElement('div');
-    confirmation.className = 'fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50';
-    confirmation.innerHTML = `
-        <div class="confirmation-modal p-6 rounded-lg shadow-lg max-w-md w-full">
-            <div class="text-xl font-bold mb-4 text-green-400">Bet Placed Successfully!</div>
-            <img src="${market.image}" class="w-full h-32 object-cover rounded mb-4">
-            <div class="mb-4">
-                <div class="text-gray-300 mb-2">${market.title}</div>
-                <div class="text-blue-300">Amount: ${formatCurrency(amount)}</div>
-                <div class="text-blue-300">Position: ${position} @ $${market.currentPrice.toFixed(2)}</div>
-                <div class="text-blue-300">Shares: ${shares.toFixed(2)}</div>
-            </div>
-            <button class="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700">Close</button>
-        </div>
-    `;
-
-    document.body.appendChild(confirmation);
-    confirmation.querySelector('button').onclick = () => {
-        confirmation.remove();
-        updatePortfolioDisplays();
-        updateMarkets();
     };
 }
 
@@ -1197,6 +1187,14 @@ function createMarketCard(market) {
                 </div>
             </div>
             
+            <div class="flex items-center gap-4 mb-4">
+                <button class="time-filter px-2 py-1 rounded-full text-sm bg-gray-800 hover:bg-gray-700" data-period="1h">1H</button>
+                <button class="time-filter px-2 py-1 rounded-full text-sm bg-gray-800 hover:bg-gray-700" data-period="6h">6H</button>
+                <button class="time-filter px-2 py-1 rounded-full text-sm bg-gray-800 hover:bg-gray-700" data-period="1d">1D</button>
+                <button class="time-filter px-2 py-1 rounded-full text-sm bg-gray-800 hover:bg-gray-700" data-period="5d">5D</button>
+                <button class="time-filter px-2 py-1 rounded-full text-sm bg-gray-800 hover:bg-gray-700" data-period="all">ALL</button>
+            </div>
+            
             <div class="canvas-container h-32 mb-4">
                 <canvas id="chart-${market.id}"></canvas>
             </div>
@@ -1209,103 +1207,219 @@ function createMarketCard(market) {
         </div>
     `;
 
-    // Add event listeners after creating elements
+    // Add event listeners
     const yesButton = card.querySelector('.bet-yes');
     const noButton = card.querySelector('.bet-no');
     const discussButton = card.querySelector('.view-discussion');
+    const timeFilters = card.querySelectorAll('.time-filter');
 
     yesButton.addEventListener('click', () => showBettingModal(market, 'yes'));
     noButton.addEventListener('click', () => showBettingModal(market, 'no'));
     discussButton.addEventListener('click', () => showMarketDiscussion(market.id));
 
+    timeFilters.forEach(button => {
+        button.addEventListener('click', () => {
+            timeFilters.forEach(b => b.classList.remove('bg-blue-600'));
+            button.classList.add('bg-blue-600');
+            updateMarketChart(market, button.dataset.period);
+        });
+    });
+
+    // Initialize chart with 24h period
     const ctx = card.querySelector(`#chart-${market.id}`).getContext('2d');
-    createChart(ctx, market);
+    createChart(ctx, market, '1d');
 
     return card;
 }
 
-// Update showBettingModal function
+function updateMarketChart(market, period) {
+    const chartId = `chart-${market.id}`;
+    const ctx = document.getElementById(chartId).getContext('2d');
+    
+    // Filter price history based on period
+    const now = new Date();
+    const filteredHistory = market.priceHistory.filter(p => {
+        const date = new Date(p.date);
+        switch(period) {
+            case '1h':
+                return (now - date) <= 3600000;
+            case '6h':
+                return (now - date) <= 21600000;
+            case '1d':
+                return (now - date) <= 86400000;
+            case '5d':
+                return (now - date) <= 432000000;
+            default:
+                return true;
+        }
+    });
+
+    // Calculate price change for the selected period
+    const priceChange = filteredHistory.length >= 2 ? 
+        ((market.currentPrice - filteredHistory[0].price) / filteredHistory[0].price * 100).toFixed(2) :
+        0;
+
+    // Update price change display
+    const priceChangeElement = ctx.canvas.closest('.market-card').querySelector('.text-sm');
+    priceChangeElement.textContent = `(${priceChange >= 0 ? '+' : ''}${priceChange}%)`;
+    priceChangeElement.className = `text-sm ${priceChange >= 0 ? 'text-green-400' : 'text-red-400'}`;
+
+    createChart(ctx, {
+        ...market,
+        priceHistory: filteredHistory
+    });
+}
+
+function calculatePriceChange(market, period) {
+    const now = new Date();
+    const history = market.priceHistory.filter(p => {
+        const date = new Date(p.date);
+        switch(period) {
+            case '1h':
+                return (now - date) <= 3600000;
+            case '6h':
+                return (now - date) <= 21600000;
+            case '1d':
+                return (now - date) <= 86400000;
+            case '5d':
+                return (now - date) <= 432000000;
+            default:
+                return true;
+        }
+    });
+
+    if (history.length < 2) return 0;
+    const previousPrice = history[0].price;
+    const currentPrice = market.currentPrice;
+    return ((currentPrice - previousPrice) / previousPrice) * 100;
+}
+
 function showBettingModal(market, position) {
-    const modal = document.getElementById('betting-modal');
-    const marketInfo = document.getElementById('modal-market-info');
-    const betAmount = document.getElementById('bet-amount');
-    const betDetails = document.getElementById('bet-details');
+    if (!market || !position) {
+        console.error('Invalid market or position');
+        return;
+    }
+
+    const betAmount = 10; // Default bet amount
     const price = position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
+    
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50';
+    modal.innerHTML = `
+        <div class="bg-gray-900 rounded-xl p-6 max-w-md w-full">
+            <h3 class="text-xl font-bold text-blue-400 mb-6">Place Bet</h3>
+            <div class="space-y-4">
+                <img src="${market.image}" class="w-full h-32 object-cover rounded">
+                <div class="font-medium text-white">${market.title}</div>
+                <div class="text-sm text-gray-400">Position: ${position} @ $${price.toFixed(2)}</div>
+                
+                <div>
+                    <label class="block text-gray-400 mb-2">Amount</label>
+                    <input type="range" 
+                           id="bet-amount-${market.id}" 
+                           min="1" 
+                           max="${portfolio.balance}" 
+                           value="${betAmount}"
+                           class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                    <div class="flex justify-between mt-2">
+                        <span class="text-sm text-gray-400">$1</span>
+                        <span id="amount-display-${market.id}" class="text-sm text-blue-400">$${betAmount}</span>
+                        <span class="text-sm text-gray-400">$${portfolio.balance}</span>
+                    </div>
+                </div>
+                
+                <div id="bet-details-${market.id}" class="p-4 bg-gray-800 rounded-lg">
+                </div>
+
+                <div class="flex gap-3">
+                    <button onclick="placeBet('${market.id}', '${position}')" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg">
+                        Place Bet
+                    </button>
+                    <button onclick="this.closest('.fixed').remove()" class="flex-1 border border-gray-700 text-gray-400 p-3 rounded-lg hover:bg-gray-800">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+
+    const slider = document.getElementById(`bet-amount-${market.id}`);
+    const display = document.getElementById(`amount-display-${market.id}`);
+    const detailsContainer = document.getElementById(`bet-details-${market.id}`);
 
     function updateBetDetails() {
-        const amount = parseFloat(betAmount.value) || 0;
+        const amount = parseFloat(slider.value);
         const shares = amount / price;
-        const potentialPayout = shares;
-
-        betDetails.innerHTML = `
-            <div>Shares: ${shares.toFixed(2)}</div>
-            <div>Cost: ${formatCurrency(amount)}</div>
-            <div>Potential Payout: ${formatCurrency(potentialPayout)}</div>
+        display.textContent = `$${amount.toFixed(2)}`;
+        
+        detailsContainer.innerHTML = `
+            <div class="flex justify-between mb-2">
+                <span class="text-gray-400">Shares:</span>
+                <span class="text-white">${shares.toFixed(2)}</span>
+            </div>
+            <div class="flex justify-between mb-2">
+                <span class="text-gray-400">Cost:</span>
+                <span class="text-white">$${amount.toFixed(2)}</span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-400">Potential Payout:</span>
+                <span class="text-white">$${shares.toFixed(2)}</span>
+            </div>
         `;
     }
 
-    marketInfo.innerHTML = `
-        <img src="${market.image}" class="w-full h-32 object-cover rounded mb-4">
-        <div class="mb-2 font-medium text-blue-300">${market.title}</div>
-        <div class="flex items-center">
-            <span>Position: ${position} @ $${price.toFixed(2)}</span>
-            <span class="ml-2 ${price >= 0 ? 'text-green-400' : 'text-red-400'}">
-                (${calculatePriceChange24h(market).toFixed(2)}%)
-            </span>
-        </div>
-    `;
-
-    betAmount.value = "10";
-    betAmount.max = portfolio.balance;
-    betAmount.removeEventListener('input', updateBetDetails);
-    betAmount.addEventListener('input', updateBetDetails);
+    slider.addEventListener('input', updateBetDetails);
     updateBetDetails();
+}
+async function placeBet(marketId, position) {
+    try {
+        const market = markets.find(m => m.id === marketId);
+        if (!market) throw new Error('Market not found');
 
-    modal.classList.remove('hidden');
+        const slider = document.getElementById(`bet-amount-${marketId}`);
+        const amount = parseFloat(slider.value);
+        const price = position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
+        const shares = amount / price;
 
-    // Update confirm bet handler
-    const confirmBtn = document.getElementById('confirm-bet');
-    const cancelBtn = document.getElementById('cancel-bet');
-    
-    const confirmBetHandler = async () => {
-        try {
-            const amount = parseFloat(betAmount.value) || 0;
-            if (amount > portfolio.balance) {
-                alert('Insufficient FunBucks');
-                return;
-            }
-
-            const shares = amount / price;
-            
-            const newBet = {
-                marketId: market.id,
-                position,
-                amount,
-                shares,
-                entryPrice: price,
-                date: new Date().toISOString()
-            };
-
-            portfolio.balance -= amount;
-            portfolio.bets.push(newBet);
-            portfolio.history.push({
-                date: new Date().toISOString(),
-                value: calculateNetworth()
-            });
-
-            await updateUserData();
-            modal.classList.add('hidden');
-            showConfirmation(market, amount, position, shares);
-            updatePortfolioDisplays();
-            updateMarkets();
-        } catch (error) {
-            console.error('Error placing bet:', error);
-            alert('Error placing bet. Please try again.');
+        if (amount > portfolio.balance) {
+            showErrorMessage('Insufficient FunBucks');
+            return;
         }
-    };
 
-    confirmBtn.onclick = confirmBetHandler;
-    cancelBtn.onclick = () => modal.classList.add('hidden');
+        const bet = {
+            marketId,
+            position,
+            amount,
+            shares,
+            entryPrice: price,
+            date: new Date().toISOString(),
+            marketTitle: market.title, // Store market title for reference
+            marketImage: market.image  // Store market image for reference
+        };
+
+        // Update local portfolio
+        portfolio.balance -= amount;
+        portfolio.bets.push(bet);
+        portfolio.history.push({
+            date: new Date().toISOString(),
+            value: calculateNetworth()
+        });
+
+        // Save to Firebase
+        await updateUserData();
+
+        // Update UI
+        document.querySelector('.fixed').remove();
+        showSuccessMessage('Bet placed successfully!');
+        await updatePortfolioDisplays();
+        await updateMarkets();
+
+    } catch (error) {
+        console.error('Error placing bet:', error);
+        showErrorMessage('Failed to place bet. Please try again.');
+    }
 }
 
 function calculateNetworth() {
@@ -1496,54 +1610,140 @@ function createMarketCard(market) {
 
 function showMarketDiscussion(marketId) {
     const market = markets.find(m => m.id === marketId);
-    if (!market) return;
-    // Create the discussion modal
+    if (!market) {
+        showErrorMessage('Market not found');
+        return;
+    }
+
     const modal = document.createElement('div');
     modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50';
+    
     modal.innerHTML = `
-        <div class="bg-gray-900 rounded-xl max-w-3xl w-full max-h-[90vh] overflow-hidden mx-4">
+        <div class="bg-gray-900 rounded-xl max-w-3xl w-full h-[80vh] flex flex-col mx-4">
             <div class="p-6 border-b border-gray-800">
                 <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-xl font-bold text-blue-300">Market Discussion</h2>
-                    <button onclick="this.closest('.fixed').remove()" 
-                            class="text-gray-400 hover:text-white transition-colors">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                    </button>
+                    <h2 class="text-xl font-bold text-blue-300">Discussion</h2>
+                    <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-white">✕</button>
                 </div>
-                <div class="flex items-center gap-4">
+                <div class="flex gap-4">
                     <img src="${market.image}" class="w-20 h-20 rounded-lg object-cover">
-                    <div>
-                        <h3 class="font-medium text-white mb-1">${market.title}</h3>
-                        <p class="text-sm text-gray-400">${market.description}</p>
+                    <div class="flex-1">
+                        <div class="font-medium text-white">${market.title}</div>
+                        <div class="text-sm text-gray-400">${market.description}</div>
                     </div>
                 </div>
             </div>
             
-            <div class="p-6 overflow-y-auto max-h-[50vh]" id="comments-container-${marketId}">
-                <div class="space-y-4" id="comments-list-${marketId}">
-                    Loading comments...
-                </div>
+            <div id="comments-container-${marketId}" class="flex-1 overflow-y-auto p-6">
+                <div class="space-y-4">Loading comments...</div>
             </div>
-            
+
             <div class="p-6 border-t border-gray-800">
-                <form onsubmit="event.preventDefault(); postComment(${marketId});" class="space-y-4">
-                    <textarea id="comment-input-${marketId}" 
-                            placeholder="Share your thoughts..."
-                            class="w-full p-3 rounded-lg bg-gray-800 border border-gray-700 text-white placeholder-gray-400 focus:border-blue-500 focus:outline-none transition-colors"
-                            rows="3"></textarea>
-                    <button type="submit" 
-                            class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors">
-                        Post Comment
-                    </button>
-                </form>
+                <textarea id="new-comment-${marketId}" 
+                         class="w-full p-3 rounded-lg bg-gray-800 border border-gray-700 text-white mb-3"
+                         placeholder="Share your thoughts..."
+                         rows="3"></textarea>
+                <button onclick="submitComment('${marketId}')"
+                        class="w-full bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg">
+                    Post Comment
+                </button>
             </div>
         </div>
     `;
 
     document.body.appendChild(modal);
     loadComments(marketId);
+}
+
+async function submitComment(marketId) {
+    if (!auth.currentUser) {
+        showErrorMessage('Please sign in to comment');
+        return;
+    }
+
+    const textarea = document.getElementById(`new-comment-${marketId}`);
+    const text = textarea.value.trim();
+    
+    if (!text) return;
+
+    try {
+        const comment = {
+            userId: auth.currentUser.uid,
+            username: currentUser.username,
+            text: text,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        await db.collection('markets').doc(marketId)
+            .collection('comments').add(comment);
+
+        textarea.value = '';
+        loadComments(marketId);
+    } catch (error) {
+        console.error('Error posting comment:', error);
+        showErrorMessage('Failed to post comment');
+    }
+}
+
+async function postComment(marketId) {
+    if (!auth.currentUser) {
+        alert('Please sign in to comment');
+        return;
+    }
+
+    const input = document.getElementById(`comment-input-${marketId}`);
+    const text = input.value.trim();
+    if (!text) return;
+
+    try {
+        await db.collection('markets').doc(marketId).collection('comments').add({
+            userId: auth.currentUser.uid,
+            username: currentUser.username,
+            text: text,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        input.value = '';
+        loadComments(marketId);
+    } catch (error) {
+        console.error('Error posting comment:', error);
+        alert('Error posting comment. Please try again.');
+    }
+}
+
+async function loadComments(marketId) {
+    const container = document.getElementById(`comments-list-${marketId}`);
+    
+    try {
+        const snapshot = await db.collection('markets')
+            .doc(marketId)
+            .collection('comments')
+            .orderBy('timestamp', 'desc')
+            .get();
+
+        if (snapshot.empty) {
+            container.innerHTML = '<div class="text-center text-gray-400">No comments yet. Be the first to comment!</div>';
+            return;
+        }
+
+        container.innerHTML = snapshot.docs.map(doc => {
+            const comment = doc.data();
+            return `
+                <div class="bg-gray-800 rounded-lg p-4">
+                    <div class="flex justify-between mb-2">
+                        <div class="font-medium text-blue-300">${comment.username}</div>
+                        <div class="text-sm text-gray-400">
+                            ${comment.timestamp ? new Date(comment.timestamp.toDate()).toLocaleString() : 'Just now'}
+                        </div>
+                    </div>
+                    <div class="text-gray-300">${comment.text}</div>
+                </div>
+            `;
+        }).join('');
+    } catch (error) {
+        console.error('Error loading comments:', error);
+        container.innerHTML = '<div class="text-center text-red-400">Error loading comments</div>';
+    }
 }
 
 async function loadComments(marketId) {
@@ -2335,7 +2535,6 @@ async function updateUserData() {
 }
 
 
-
 auth.onAuthStateChanged(async (user) => {
     try {
         if (user) {
@@ -2343,6 +2542,17 @@ auth.onAuthStateChanged(async (user) => {
             
             if (userDoc.exists) {
                 const userData = userDoc.data();
+                
+                // Initialize portfolio with user data
+                portfolio = {
+                    balance: userData.funbucks || 500,
+                    bets: userData.bets || [],
+                    history: userData.history || [{
+                        date: new Date().toISOString(),
+                        value: 500
+                    }]
+                };
+
                 currentUser = {
                     uid: user.uid,
                     ...userData
@@ -2357,16 +2567,25 @@ auth.onAuthStateChanged(async (user) => {
                 await getMarkets();
                 await updatePortfolioDisplays();
                 await updateMarkets();
+                
+                // Store in localStorage as backup
+                localStorage.setItem('userData', JSON.stringify(userData));
             }
         } else {
-            // Reset state on logout
+            // Clear all data on logout
             currentUser = null;
             markets = [];
             portfolio = {
                 balance: 500,
                 bets: [],
-                history: []
+                history: [{
+                    date: new Date().toISOString(),
+                    value: 500
+                }]
             };
+            
+            // Clear localStorage
+            localStorage.removeItem('userData');
             
             // Update UI
             document.getElementById('auth-container').classList.remove('hidden');
@@ -2375,10 +2594,54 @@ auth.onAuthStateChanged(async (user) => {
         }
     } catch (error) {
         console.error('Auth state change error:', error);
-        alert('Error with authentication. Please try again.');
+        
+        // Try to recover from localStorage if Firebase fails
+        const savedData = localStorage.getItem('userData');
+        if (savedData) {
+            const userData = JSON.parse(savedData);
+            portfolio = {
+                balance: userData.funbucks || 500,
+                bets: userData.bets || [],
+                history: userData.history || []
+            };
+            currentUser = userData;
+            await updatePortfolioDisplays();
+        }
+        
+        showErrorMessage('Error loading user data. Some features may be limited.');
     }
 });
+async function recoverUserData() {
+    if (!auth.currentUser) return;
+    
+    try {
+        const userDoc = await db.collection('users').doc(auth.currentUser.uid).get();
+        if (userDoc.exists) {
+            const userData = userDoc.data();
+            portfolio = {
+                balance: userData.funbucks || 500,
+                bets: userData.bets || [],
+                history: userData.history || []
+            };
+            currentUser = {
+                uid: auth.currentUser.uid,
+                ...userData
+            };
+            await updatePortfolioDisplays();
+            await updateMarkets();
+        }
+    } catch (error) {
+        console.error('Error recovering user data:', error);
+        showErrorMessage('Error recovering user data');
+    }
+}
 
+// Call this function when page loads
+window.addEventListener('load', () => {
+    if (auth.currentUser) {
+        recoverUserData();
+    }
+});
 </script>
 </body>
 </html>
