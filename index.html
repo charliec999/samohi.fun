@@ -9,6 +9,29 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-auth-compat.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-firestore-compat.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <script>
+        const script = document.createElement('script');
+        script.innerHTML = `
+            Chart.register(
+                Chart.controllers.line,
+                Chart.scales.linear,
+                Chart.scales.category,
+                Chart.elements.line,
+                Chart.elements.point,
+                Chart.elements.arc,
+                Chart.defaults,
+                Chart.layouts,
+                Chart.Animation,
+                Chart.Animations,
+                Chart.Decimation,
+                Chart.Filler,
+                Chart.Legend,
+                Chart.Title,
+                Chart.Tooltip
+            );
+        `;
+        document.head.appendChild(script);
+    </script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
     
@@ -423,12 +446,14 @@ const chartManager = {
     },
 
     createChart(ctx, market, options = {}) {
-        if (!ctx || !ctx.canvas) return null;
+        if (!ctx || !ctx.canvas || !market) return null;
         
         const chartId = ctx.canvas.id;
-        this.destroyChart(chartId);
+        this.destroyChart(chartId); // Ensure old chart is destroyed
 
         try {
+            Chart.register(...registerables); // Ensure Chart.js components are registered
+            
             const chart = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -459,6 +484,53 @@ const chartManager = {
         }
     }
 };
+
+async function updateMarketPrice(marketId) {
+    if (!marketId) {
+        showErrorMessage('Invalid market ID');
+        return;
+    }
+
+    try {
+        const slider = document.getElementById('price-slider');
+        const newPrice = parseFloat(slider.value) / 100;
+        
+        const marketRef = db.collection('markets').doc(marketId);
+        const marketDoc = await marketRef.get();
+        
+        if (!marketDoc.exists) {
+            throw new Error('Market not found');
+        }
+
+        const marketData = marketDoc.data();
+        const previousPrice = marketData.currentPrice;
+        const priceChange = ((newPrice - previousPrice) / previousPrice) * 100;
+
+        await marketRef.update({
+            currentPrice: newPrice,
+            lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
+            priceHistory: firebase.firestore.FieldValue.arrayUnion({
+                date: new Date(),
+                price: newPrice,
+                change: priceChange
+            })
+        });
+
+        const modal = document.querySelector('.fixed');
+        if (modal) modal.remove();
+        
+        showSuccessMessage(`Price updated (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)`);
+        await Promise.all([
+            loadAdminMarkets(),
+            getMarkets(),
+            updateMarkets()
+        ]);
+    } catch (error) {
+        console.error('Error updating price:', error);
+        showErrorMessage('Failed to update price');
+    }
+}
+
 async function updateMarketsAndCharts() {
     chartManager.destroyAll(); // Clean up all existing charts
     
@@ -778,68 +850,15 @@ function showAdminPanel() {
     loadAdminMarkets();
 }
 
-// function showPriceUpdateModal(market) {
-//     const modal = document.createElement('div');
-//     modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[60]';
-//     modal.innerHTML = `
-//         <div class="bg-gray-900 rounded-xl p-6 max-w-md w-full">
-//             <div class="flex justify-between items-center mb-6">
-//                 <h3 class="text-xl font-bold text-blue-400">Update Market Price</h3>
-//                 <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-white">×</button>
-//             </div>
-            
-//             <h4 class="text-white mb-4">${market.title}</h4>
-//             <div class="mb-6">
-//                 <div class="flex justify-between text-sm text-gray-400 mb-2">
-//                     <span>Current: $${market.currentPrice.toFixed(3)}</span>
-//                     <span id="price-change" class="text-gray-400"></span>
-//                 </div>
-//                 <input type="range" 
-//                        id="price-slider" 
-//                        min="0" 
-//                        max="100" 
-//                        value="${market.currentPrice * 100}" 
-//                        class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer mb-2">
-//                 <div class="flex justify-between text-sm text-gray-400">
-//                     <span>$0.00</span>
-//                     <span id="new-price" class="text-blue-400">$${market.currentPrice.toFixed(3)}</span>
-//                     <span>$1.00</span>
-//                 </div>
-//             </div>
-
-//             <div class="flex gap-4">
-//                 <button onclick="submitPriceUpdate('${market.id}')" 
-//                         class="flex-1 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg transition-all">
-//                     Update Price
-//                 </button>
-//                 <button onclick="this.closest('.fixed').remove()" 
-//                         class="flex-1 border border-gray-700 text-gray-400 p-3 rounded-lg hover:bg-gray-800">
-//                     Cancel
-//                 </button>
-//             </div>
-//         </div>
-//     `;
-//     document.body.appendChild(modal);
-
-//     const slider = document.getElementById('price-slider');
-//     const newPriceDisplay = document.getElementById('new-price');
-//     const changeDisplay = document.getElementById('price-change');
-
-//     slider.oninput = () => {
-//         const newPrice = slider.value / 100;
-//         const change = ((newPrice - market.currentPrice) / market.currentPrice) * 100;
-//         newPriceDisplay.textContent = `$${newPrice.toFixed(3)}`;
-//         changeDisplay.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
-//         changeDisplay.className = `text-sm ${change >= 0 ? 'text-green-400' : 'text-red-400'}`;
-//     };
-// }
 function showPriceUpdateModal(market) {
-    // Remove any existing modals
-    document.querySelectorAll('.modal-overlay').forEach(el => el.remove());
+    if (!market || !market.id) {
+        showErrorMessage('Invalid market data');
+        return;
+    }
 
     const modal = document.createElement('div');
     modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center';
-    modal.style.zIndex = '10000'; // Ensure it's above admin panel
+    modal.style.zIndex = '10001';
     modal.innerHTML = `
         <div class="bg-gray-900 rounded-xl p-6 max-w-md w-full">
             <div class="flex justify-between items-center mb-6">
@@ -895,6 +914,7 @@ function showPriceUpdateModal(market) {
         changeDisplay.className = `text-sm ${change >= 0 ? 'text-green-400' : 'text-red-400'}`;
     };
 }
+
 
 
 function showResolutionModal(market) {
@@ -1203,28 +1223,48 @@ async function loadAdminMarkets() {
     }
 }
 
-async function updateMarketPrice(marketId) {
-    try {
-        const slider = document.getElementById('price-slider');
-        const newPrice = parseFloat(slider.value) / 100;
-        
-        const marketRef = db.collection('markets').doc(marketId);
-        await marketRef.update({
-            currentPrice: newPrice,
-            lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
-            priceHistory: firebase.firestore.FieldValue.arrayUnion({
-                date: new Date(),
-                price: newPrice
-            })
-        });
+async function loadAdminMarkets() {
+    const marketsContainer = document.getElementById('admin-markets-list');
+    if (!marketsContainer) return;
 
-        document.querySelector('.fixed').remove();
-        showSuccessMessage('Price updated successfully');
-        await getMarkets();
-        await updateMarkets();
+    try {
+        const snapshot = await db.collection('markets').orderBy('createdAt', 'desc').get();
+        marketsContainer.innerHTML = snapshot.docs.map(doc => {
+            const market = { id: doc.id, ...doc.data() };
+            const marketJson = JSON.stringify(market).replace(/"/g, '&quot;');
+            
+            return `
+                <div class="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                    <div class="flex justify-between items-center">
+                        <div class="flex-grow">
+                            <div class="font-medium text-blue-300">${market.title}</div>
+                            <div class="text-sm text-gray-400">${market.category}</div>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="showEditMarketModal('${market.id}')" 
+                                    class="bg-yellow-600 text-white px-3 py-1 rounded">
+                                Edit
+                            </button>
+                            <button onclick="showPriceUpdateModal(${marketJson})" 
+                                    class="bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700">
+                                Update Price
+                            </button>
+                            <button onclick="showResolutionModal(${marketJson})" 
+                                    class="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700">
+                                Resolve
+                            </button>
+                            <button onclick="deleteMarket('${market.id}')" 
+                                    class="bg-red-600 text-white px-3 py-1 rounded">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
     } catch (error) {
-        console.error('Error updating price:', error);
-        showErrorMessage('Failed to update price');
+        console.error('Error loading markets:', error);
+        marketsContainer.innerHTML = '<div class="text-red-400">Error loading markets</div>';
     }
 }
 
@@ -1459,17 +1499,20 @@ function formatCurrency(amount) {
 }
 
 function calculatePriceChange24h(market) {
-            if (!Array.isArray(market.priceHistory)) {
-                return 0;
-            }
-            const last24h = market.priceHistory
-                .filter(p => new Date(p.date) >= new Date(Date.now() - 24 * 60 * 60 * 1000))
-                .map(p => p.price);
-            if (last24h.length < 2) return 0;
-            const previousPrice = last24h[0];
-            const currentPrice = market.currentPrice;
-            return ((currentPrice - previousPrice) / previousPrice) * 100;
-        }
+    if (!market.priceHistory || !Array.isArray(market.priceHistory)) return 0;
+
+    const now = new Date();
+    const twentyFourHoursAgo = new Date(now - 24 * 60 * 60 * 1000);
+    
+    const recentPrices = market.priceHistory
+        .filter(p => new Date(p.date) >= twentyFourHoursAgo)
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    if (recentPrices.length < 1) return 0;
+
+    const oldestPrice = recentPrices[0].price;
+    return ((market.currentPrice - oldestPrice) / oldestPrice) * 100;
+}
 
 const marketSearch = document.getElementById('market-search');
 const filterButtons = document.querySelectorAll('.filter-btn');
@@ -1658,9 +1701,39 @@ function createMarketCard(market) {
     card.className = 'market-card rounded-xl overflow-hidden';
     card.dataset.marketId = market.id;
 
-    const priceChange24h = calculatePriceChange24h(market);
+    let priceChange = 0;
+    if (market.priceHistory && market.priceHistory.length >= 2) {
+        const previousPrice = market.priceHistory[market.priceHistory.length - 2].price;
+        priceChange = ((market.currentPrice - previousPrice) / previousPrice) * 100;
+    }
+    
     const chartId = `chart-${market.id}-${Date.now()}`;
     
+    // Add resolution status
+    const resolutionStatus = market.resolved ? `
+        <div class="mt-4 p-4 ${market.finalResult ? 'bg-green-900/50' : 'bg-red-900/50'} rounded-lg">
+            <div class="flex justify-between items-center">
+                <div>
+                    <span class="font-medium">Resolved as ${market.finalResult ? 'YES' : 'NO'}</span>
+                    <div class="text-sm text-gray-400">
+                        ${formatDate(market.resolvedAt?.toDate())}
+                    </div>
+                </div>
+                ${isWithinChallengeWindow(market.resolvedAt) ? `
+                    <button onclick="showChallengeForm('${market.id}')" 
+                            class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg">
+                        Challenge
+                    </button>
+                ` : ''}
+            </div>
+            ${market.challenges ? `
+                <div class="mt-2 text-sm text-gray-400">
+                    ${market.challenges.length} challenge(s) submitted
+                </div>
+            ` : ''}
+        </div>
+    ` : '';
+
     card.innerHTML = `
         <div class="relative">
             <img src="${market.image}" class="w-full h-48 object-cover">
@@ -1679,20 +1752,28 @@ function createMarketCard(market) {
                     <div class="text-xs text-gray-400 mb-1">Current Price</div>
                     <div class="flex items-center gap-2">
                         <span class="text-lg font-bold text-white">$${market.currentPrice.toFixed(2)}</span>
-                        <span class="${priceChange24h >= 0 ? 'text-green-400' : 'text-red-400'} text-sm">
-                            (${priceChange24h >= 0 ? '+' : ''}${priceChange24h.toFixed(2)}%)
+                        <span class="${priceChange === 0 ? 'text-gray-400' : priceChange > 0 ? 'text-green-400' : 'text-red-400'} text-sm">
+                            (${priceChange > 0 ? '+' : ''}${priceChange.toFixed(2)}%)
                         </span>
                     </div>
                 </div>
                 <div class="flex gap-2">
-                    <button class="bet-yes bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg">Yes</button>
-                    <button class="bet-no bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg">No</button>
+                    <button class="bet-yes bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg" 
+                            ${market.resolved ? 'disabled' : ''}>
+                        Yes
+                    </button>
+                    <button class="bet-no bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg"
+                            ${market.resolved ? 'disabled' : ''}>
+                        No
+                    </button>
                 </div>
             </div>
             
             <div class="canvas-container h-32 mb-4">
                 <canvas id="${chartId}"></canvas>
             </div>
+            
+            ${resolutionStatus}
             
             <div class="border-t border-gray-700 pt-4 mt-4">
                 <button class="view-discussion w-full text-center text-gray-400 hover:text-blue-300 text-sm">
@@ -1702,17 +1783,11 @@ function createMarketCard(market) {
         </div>
     `;
 
-    // Add event listeners
-    const yesButton = card.querySelector('.bet-yes');
-    const noButton = card.querySelector('.bet-no');
-    const discussButton = card.querySelector('.view-discussion');
-
-    yesButton.onclick = () => showBettingModal(market, 'yes');
-    noButton.onclick = () => showBettingModal(market, 'no');
-    discussButton.onclick = () => showMarketDiscussion(market.id);
-
+    addMarketEventListeners(card, market);
     return card;
 }
+
+
 
 
 function updateMarketChart(market, period) {
@@ -1900,14 +1975,30 @@ async function placeBet(marketId, position) {
     }
 }
 
-function calculateNetworth() {
-    const betsValue = portfolio.bets.reduce((total, bet) => {
-        const { currentValue } = calculateBetValue(bet);
+function calculateNetworth(userData = null) {
+    // If no userData passed, use current portfolio
+    if (!userData) {
+        return portfolio.balance + portfolio.bets.reduce((total, bet) => {
+            const market = markets.find(m => m.id === bet.marketId);
+            if (!market) return total;
+            
+            const price = bet.position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
+            const currentValue = bet.shares * price;
+            return total + (isFinite(currentValue) ? currentValue : 0);
+        }, 0);
+    }
+
+    // Calculate for specific user data
+    const betsValue = (userData.bets || []).reduce((total, bet) => {
+        const market = markets.find(m => m.id === bet.marketId);
+        if (!market) return total;
+        
+        const price = bet.position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
+        const currentValue = bet.shares * price;
         return total + (isFinite(currentValue) ? currentValue : 0);
     }, 0);
     
-    const networth = portfolio.balance + betsValue;
-    return isFinite(networth) ? networth : portfolio.balance;
+    return (userData.funbucks || 0) + betsValue;
 }
 
 function createChart(ctx, market) {
@@ -2055,49 +2146,126 @@ function updatePortfolioChart() {
     const ctx = document.getElementById('portfolio-chart')?.getContext('2d');
     if (!ctx) return;
 
-    const historyData = portfolio.history.map(item => ({
-        date: new Date(item.date),
-        value: item.value
-    })).sort((a, b) => a.date - b.date);
+    // Clean up existing chart
+    chartManager.destroyAll();
+
+    const historyData = portfolio.history
+        .slice(-30) // Show last 30 data points
+        .map(item => ({
+            date: new Date(item.date),
+            value: item.value
+        }))
+        .sort((a, b) => a.date - b.date);
 
     if (historyData.length === 0) {
-        historyData.unshift({
+        historyData.push({
             date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-            value: 500
+            value: portfolio.balance
         });
     }
 
-    createChart(ctx, {
-        priceHistory: historyData.map(item => ({
-            date: item.date,
-            price: item.value
-        }))
-    });
+    try {
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: historyData.map(item => formatDate(item.date)),
+                datasets: [{
+                    label: 'Portfolio Value',
+                    data: historyData.map(item => item.value),
+                    borderColor: '#4299E1',
+                    backgroundColor: 'rgba(66, 153, 225, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: '#E2E8F0'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: '#E2E8F0'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: (context) => `Value: ${formatCurrency(context.raw)}`
+                        }
+                    }
+                }
+            }
+        });
+        chartManager.instances.set('portfolio-chart', chart);
+    } catch (error) {
+        console.error('Error creating portfolio chart:', error);
+    }
 }
 
 function updatePortfolioDisplays() {
+    if (!portfolio) return;
+    
     const networth = calculateNetworth();
-    const betsValue = portfolio.bets.reduce((total, bet) => {
+    const betsValue = (portfolio.bets || []).reduce((total, bet) => {
         const { currentValue } = calculateBetValue(bet);
         return total + currentValue;
     }, 0);
 
-    document.getElementById('balance-display').textContent = `Balance: ${formatCurrency(portfolio.balance)}`;
-    document.getElementById('networth-display').textContent = `Networth: ${formatCurrency(networth)}`;
-    document.getElementById('portfolio-networth').textContent = formatCurrency(networth);
-    document.getElementById('portfolio-balance').textContent = formatCurrency(portfolio.balance);
-    document.getElementById('portfolio-bets-value').textContent = formatCurrency(betsValue);
+    const balanceDisplay = document.getElementById('balance-display');
+    const networthDisplay = document.getElementById('networth-display');
+    const portfolioNetworth = document.getElementById('portfolio-networth');
+    const portfolioBalance = document.getElementById('portfolio-balance');
+    const portfolioBetsValue = document.getElementById('portfolio-bets-value');
+
+    if (balanceDisplay) balanceDisplay.textContent = `Balance: ${formatCurrency(portfolio.balance)}`;
+    if (networthDisplay) networthDisplay.textContent = `Networth: ${formatCurrency(networth)}`;
+    if (portfolioNetworth) portfolioNetworth.textContent = formatCurrency(networth);
+    if (portfolioBalance) portfolioBalance.textContent = formatCurrency(portfolio.balance);
+    if (portfolioBetsValue) portfolioBetsValue.textContent = formatCurrency(betsValue);
 
     updatePortfolioBets();
     updatePortfolioChart();
 }
 
+
 function createMarketCard(market) {
     const card = document.createElement('div');
     card.className = 'market-card rounded-xl overflow-hidden transition-all duration-300 hover:shadow-xl';
     card.dataset.marketId = market.id;
+    const lastTwoUpdates = market.priceHistory
+        .slice(-2)
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+        
+    const priceChange = lastTwoUpdates.length > 1
+        ? ((lastTwoUpdates[1].price - lastTwoUpdates[0].price) / lastTwoUpdates[0].price) * 100
+        : 0;
+
     
     const priceChange24h = calculatePriceChange24h(market);
+    const priceDisplay = `
+        <div class="flex items-center gap-2">
+            <span class="text-lg font-bold text-white">$${market.currentPrice.toFixed(2)}</span>
+            <span class="${priceChange === 0 ? 'text-gray-400' : priceChange > 0 ? 'text-green-400' : 'text-red-400'} text-sm">
+                (${priceChange > 0 ? '+' : ''}${priceChange.toFixed(2)}%)
+            </span>
+        </div>
+    `;
     
     card.innerHTML = `
         <div class="relative">
@@ -2788,42 +2956,52 @@ document.getElementById('save-profile-picture')?.addEventListener('click', async
         alert('Error updating profile picture');
     }
 });
+
 async function updateLeaderboard() {
     const leaderboardList = document.getElementById('leaderboard-list');
     if (!leaderboardList) return;
 
     try {
+        // Clear existing charts first
+        chartManager.destroyAll();
+
         const snapshot = await db.collection('users')
             .orderBy('funbucks', 'desc')
             .limit(10)
             .get();
 
-        const leaders = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
+        const leaders = await Promise.all(snapshot.docs.map(async doc => {
+            const userData = doc.data();
+            const networth = calculateNetworth(userData);
+            return {
+                id: doc.id,
+                ...userData,
+                networth
+            };
         }));
+
+        leaders.sort((a, b) => b.networth - a.networth);
 
         leaderboardList.innerHTML = leaders.map((user, index) => `
             <div class="bg-gray-800 p-6 rounded-lg border border-blue-900 cursor-pointer hover:border-blue-500 transition-colors mb-6"
-             onclick="showUserProfile('${user.id}')">
-            <div class="flex items-center justify-between mb-4">
-                <div class="flex items-center gap-4">
-                    <div class="text-2xl font-bold ${index < 3 ? 'text-yellow-400' : 'text-gray-400'}">#${index + 1}</div>
-                    <img src="${user.profilePicture || DEFAULT_PROFILE_PIC}" 
-                         class="w-12 h-12 rounded-full object-cover border-2 border-blue-500">
-                    <div>
-                        <div class="font-medium text-blue-300">${user.username}</div>
-                        <div class="text-green-400">${formatCurrency(user.funbucks)}</div>
+                 onclick="showUserProfile('${user.id}')">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-4">
+                        <div class="text-2xl font-bold ${index < 3 ? 'text-yellow-400' : 'text-gray-400'}">#${index + 1}</div>
+                        <img src="${user.profilePicture || DEFAULT_PROFILE_PIC}" 
+                             class="w-12 h-12 rounded-full object-cover border-2 border-blue-500">
+                        <div>
+                            <div class="font-medium text-blue-300">${user.username}</div>
+                            <div class="text-green-400">Balance: ${formatCurrency(user.funbucks)}</div>
+                            <div class="text-blue-400">Networth: ${formatCurrency(user.networth)}</div>
+                        </div>
                     </div>
+                    <div class="text-gray-400">${user.bets?.length || 0} Active Bets</div>
                 </div>
-                <div class="text-gray-400">
-                    ${user.bets?.length || 0} Bets
+                <div class="h-32">
+                    <canvas id="user-chart-${user.id}"></canvas>
                 </div>
             </div>
-            <div class="h-32">
-                <canvas id="user-chart-${user.id}"></canvas>
-            </div>
-        </div>
         `).join('');
 
         // Create charts for each user
@@ -2832,6 +3010,7 @@ async function updateLeaderboard() {
             if (!ctx) return;
 
             const historyData = (user.history || [])
+                .slice(-30)
                 .map(item => ({
                     date: new Date(item.date),
                     value: item.value
@@ -2841,23 +3020,64 @@ async function updateLeaderboard() {
             if (historyData.length === 0) {
                 historyData.push({
                     date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-                    value: 500
+                    value: user.funbucks || 500
                 });
             }
 
-            createChart(ctx, {
-                priceHistory: historyData.map(item => ({
-                    date: item.date,
-                    price: item.value
-                }))
-            });
+            try {
+                const chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: historyData.map(item => formatDate(item.date)),
+                        datasets: [{
+                            label: 'Portfolio Value',
+                            data: historyData.map(item => item.value),
+                            borderColor: '#4299E1',
+                            backgroundColor: 'rgba(66, 153, 225, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.1)'
+                                },
+                                ticks: {
+                                    color: '#E2E8F0'
+                                }
+                            },
+                            x: {
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.1)'
+                                },
+                                ticks: {
+                                    color: '#E2E8F0'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        }
+                    }
+                });
+                chartManager.instances.set(`user-chart-${user.id}`, chart);
+            } catch (error) {
+                console.error('Error creating user chart:', error);
+            }
         });
-
     } catch (error) {
         console.error('Error updating leaderboard:', error);
         leaderboardList.innerHTML = '<div class="text-red-400">Error loading leaderboard</div>';
     }
 }
+
 
 async function showUserProfile(userId) {
     try {
@@ -2865,51 +3085,56 @@ async function showUserProfile(userId) {
         if (!userDoc.exists) return;
         
         const userData = userDoc.data();
-        const modal = document.createElement('div');
-        modal.className = 'fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50';
+        const networth = calculateNetworth(userData);
         
-        const betsHtml = userData.bets?.map(bet => {
-            const market = sampleMarkets.find(m => m.id === bet.marketId);
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[10001]';
+        
+        const activeBets = userData.bets?.map(bet => {
+            const market = markets.find(m => m.id === bet.marketId);
             if (!market) return '';
             
+            const currentPrice = bet.position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
+            const currentValue = bet.shares * currentPrice;
+            const priceChange = ((currentPrice - bet.entryPrice) / bet.entryPrice) * 100;
+            
             return `
-                <div class="bg-gray-800 p-3 rounded border border-blue-900">
+                <div class="bg-gray-800 p-3 rounded border border-blue-900 mb-2">
                     <div class="font-medium ${bet.position === 'yes' ? 'text-green-400' : 'text-red-400'}">
                         ${market.title}
                     </div>
                     <div class="text-sm text-gray-400">
-                        Position: ${bet.position} @ $${bet.entryPrice.toFixed(2)}
+                        Position: ${bet.position} @ $${bet.entryPrice.toFixed(3)}
                     </div>
-                    <div class="text-sm text-blue-300">
-                        Amount: ${formatCurrency(bet.amount)}
-                    </div>
-                    <div class="text-sm text-gray-400">
-                        Placed: ${formatDate(bet.date)}
+                    <div class="text-sm ${priceChange >= 0 ? 'text-green-400' : 'text-red-400'}">
+                        Current Value: ${formatCurrency(currentValue)} (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)
                     </div>
                 </div>
             `;
-        }).join('') || '<div class="text-gray-400">No bets placed yet</div>';
+        }).join('') || '<div class="text-gray-400">No active bets</div>';
 
         modal.innerHTML = `
-            <div class="confirmation-modal p-6 rounded-lg shadow-lg max-w-2xl w-full max-h-[80vh] overflow-y-auto">
-                <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-xl font-bold text-blue-300">${userData.username}'s Profile</h3>
+            <div class="bg-gray-900 rounded-xl p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <div>
+                        <h3 class="text-xl font-bold text-blue-300">${userData.username}'s Profile</h3>
+                        <div class="text-green-400">Balance: ${formatCurrency(userData.funbucks)}</div>
+                        <div class="text-blue-400">Networth: ${formatCurrency(networth)}</div>
+                    </div>
                     <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-white">✕</button>
                 </div>
-                <div class="mb-4">
-                    <div class="text-gray-400">Balance</div>
-                    <div class="text-2xl font-bold text-green-400">${formatCurrency(userData.funbucks)}</div>
-                </div>
+                
                 <div class="mb-6">
                     <h4 class="text-lg font-semibold mb-3 text-blue-300">Portfolio History</h4>
-                    <div class="h-64">
+                    <div class="h-64 bg-gray-800 rounded-lg p-4">
                         <canvas id="profile-chart-${userId}"></canvas>
                     </div>
                 </div>
+                
                 <div>
-                    <h4 class="text-lg font-semibold mb-3 text-blue-300">Bet History</h4>
+                    <h4 class="text-lg font-semibold mb-3 text-blue-300">Active Bets</h4>
                     <div class="space-y-2">
-                        ${betsHtml}
+                        ${activeBets}
                     </div>
                 </div>
             </div>
@@ -2917,9 +3142,11 @@ async function showUserProfile(userId) {
 
         document.body.appendChild(modal);
 
+        // Create portfolio chart
         const ctx = document.getElementById(`profile-chart-${userId}`)?.getContext('2d');
         if (ctx) {
             const historyData = (userData.history || [])
+                .slice(-30) // Show last 30 data points
                 .map(item => ({
                     date: new Date(item.date),
                     value: item.value
@@ -2929,7 +3156,7 @@ async function showUserProfile(userId) {
             if (historyData.length === 0) {
                 historyData.push({
                     date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-                    value: 500
+                    value: userData.funbucks || 500
                 });
             }
 
@@ -2942,8 +3169,10 @@ async function showUserProfile(userId) {
         }
     } catch (error) {
         console.error('Error showing user profile:', error);
+        showErrorMessage('Error loading user profile');
     }
 }
+
 
 document.getElementById('toggle-auth').addEventListener('click', () => {
     isLoginMode = !isLoginMode;
@@ -3167,78 +3396,71 @@ async function updateUserData() {
 
 auth.onAuthStateChanged(async (user) => {
     try {
+        chartManager.destroyAll();
+        
         if (user) {
             const userDoc = await db.collection('users').doc(user.uid).get();
             
-            if (userDoc.exists) {
-                const userData = userDoc.data();
+            if (!userDoc.exists) {
+                const initialData = {
+                    username: user.email.split('@')[0],
+                    email: user.email,
+                    funbucks: 500,
+                    bets: [],
+                    history: [{
+                        date: new Date().toISOString(),
+                        value: 500
+                    }],
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                };
                 
-                // Initialize portfolio with user data
+                await db.collection('users').doc(user.uid).set(initialData);
+                currentUser = { uid: user.uid, ...initialData };
+                portfolio = {
+                    balance: initialData.funbucks,
+                    bets: initialData.bets,
+                    history: initialData.history
+                };
+            } else {
+                const userData = userDoc.data();
+                currentUser = { uid: user.uid, ...userData };
                 portfolio = {
                     balance: userData.funbucks || 500,
                     bets: userData.bets || [],
                     history: userData.history || [{
                         date: new Date().toISOString(),
-                        value: 500
+                        value: userData.funbucks || 500
                     }]
                 };
+            }
 
-                currentUser = {
-                    uid: user.uid,
-                    ...userData
-                };
-                
-                // Update UI
-                document.getElementById('auth-container').classList.add('hidden');
-                document.getElementById('app-container').classList.remove('hidden');
-                document.getElementById('username-display').textContent = userData.username;
-                
-                // Load initial data
+            document.getElementById('auth-container').classList.add('hidden');
+            document.getElementById('app-container').classList.remove('hidden');
+            document.getElementById('username-display').textContent = currentUser.username;
+            
+            // Only proceed with updates if we have valid data
+            if (currentUser && portfolio) {
                 await getMarkets();
                 await updatePortfolioDisplays();
                 await updateMarkets();
-                
-                // Store in localStorage as backup
-                localStorage.setItem('userData', JSON.stringify(userData));
             }
         } else {
-            // Clear all data on logout
+            // Reset state on logout
             currentUser = null;
             markets = [];
             portfolio = {
                 balance: 500,
                 bets: [],
-                history: [{
-                    date: new Date().toISOString(),
-                    value: 500
-                }]
+                history: [{ date: new Date().toISOString(), value: 500 }]
             };
             
-            // Clear localStorage
-            localStorage.removeItem('userData');
-            
-            // Update UI
             document.getElementById('auth-container').classList.remove('hidden');
             document.getElementById('app-container').classList.add('hidden');
             document.getElementById('auth-form').reset();
         }
     } catch (error) {
         console.error('Auth state change error:', error);
-        
-        // Try to recover from localStorage if Firebase fails
-        const savedData = localStorage.getItem('userData');
-        if (savedData) {
-            const userData = JSON.parse(savedData);
-            portfolio = {
-                balance: userData.funbucks || 500,
-                bets: userData.bets || [],
-                history: userData.history || []
-            };
-            currentUser = userData;
-            await updatePortfolioDisplays();
-        }
-        
-        showErrorMessage('Error loading user data. Some features may be limited.');
+        showErrorMessage('Please refresh the page and try again');
     }
 });
 async function recoverUserData() {
@@ -3275,6 +3497,3 @@ window.addEventListener('load', () => {
 </script>
 </body>
 </html>
-<!-- 
-I'm making a prediction market. My Code is attached. I need you to help me with a couple things. First, I want you to change the number field when making a bet to a slider, where the maximum value for the slider goes up to the maximum amunt of avaliable funbucks. I also need you to help me in the admin panel with Update Price and Resolve. When I try to Update Price I get this error: "`Error updating price: FirebaseError: No document to update: projects/polyclone-charlito/databases/(default)/documents/markets/undefined`" and when i try to resolve the market i get this error: "`Error resolving market: FirebaseError: No document to update: projects/polyclone-charlito/databases/(default)/documents/markets/undefined`". I think the problem is the name of the market, because undefined is not the correct name. Please fix these errors and make sure both update price and resolve market work as intended.
--->
