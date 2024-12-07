@@ -11,6 +11,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
+    
     <style>
         body {
             background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
@@ -63,11 +64,15 @@
             border: 1px solid rgba(66, 153, 225, 0.3);
             animation: slideIn 0.3s ease-out;
         }
+        .modal-overlay {
+            z-index: 9999;
+        }
         .admin-panel {
             background: linear-gradient(145deg, #1a202c, #2d3748);
             border-radius: 1rem;
             box-shadow: 0 20px 40px rgba(0,0,0,0.3);
         }
+        
         .admin-section {
             background: rgba(45, 55, 72, 0.3);
             border-radius: 0.75rem;
@@ -114,7 +119,9 @@
             font-size: 1.25rem;
             color: #4299E1;
         }
+        
     </style>
+    
 </head>
 <body>
     <div id="betting-modal" class="fixed inset-0 bg-black bg-opacity-70 hidden animate__animated animate__fadeIn" style="z-index: 1000;">
@@ -334,6 +341,8 @@ const db = firebase.firestore();
 const storage = firebase.storage && firebase.storage();
 
 const isAdmin = async (userId) => {
+    if (!userId) return false;
+    
     try {
         const userDoc = await db.collection('users').doc(userId).get();
         return userDoc.exists && userDoc.data().isAdmin === true;
@@ -342,83 +351,56 @@ const isAdmin = async (userId) => {
         return false;
     }
 };
-
-// Replace your auth state change handler
 auth.onAuthStateChanged(async (user) => {
     try {
-        chartManager.destroyAll(); // Clean up all charts first
         if (user) {
             const userDoc = await db.collection('users').doc(user.uid).get();
             
-            if (!userDoc.exists) {
-                // Create new user document if it doesn't exist
-                const initialData = {
-                    username: user.email.split('@')[0],
-                    email: user.email,
-                    funbucks: 500,
-                    bets: [],
-                    history: [{
-                        date: new Date().toISOString(),
-                        value: 500
-                    }],
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                };
-                await db.collection('users').doc(user.uid).set(initialData);
-                currentUser = { uid: user.uid, ...initialData };
-                portfolio = {
-                    balance: initialData.funbucks,
-                    bets: initialData.bets,
-                    history: initialData.history
-                };
-            } else {
+            if (userDoc.exists) {
                 const userData = userDoc.data();
-                currentUser = { uid: user.uid, ...userData };
-                portfolio = {
-                    balance: userData.funbucks || 500,
-                    bets: userData.bets || [],
-                    history: userData.history || [{
-                        date: new Date().toISOString(),
-                        value: userData.funbucks || 500
-                    }]
+                currentUser = {
+                    uid: user.uid,
+                    email: user.email,
+                    isAdmin: userData.isAdmin || false, // Make sure to include isAdmin
+                    ...userData
                 };
+                
+                // Update UI
+                document.getElementById('auth-container').classList.add('hidden');
+                document.getElementById('app-container').classList.remove('hidden');
+                document.getElementById('username-display').textContent = userData.username;
+                
+                // Check admin status and show/hide admin panel button
+                const adminButton = document.getElementById('admin-panel-btn');
+                if (currentUser.isAdmin) {
+                    adminButton?.classList.remove('hidden');
+                    adminButton.onclick = () => showAdminPanel();
+                } else {
+                    adminButton?.classList.add('hidden');
+                }
+                
+                // Load markets and update displays
+                await getMarkets();
+                await updatePortfolioDisplays();
+                await updateMarkets();
             }
-
-            // Update UI after data is loaded
-            document.getElementById('auth-container').classList.add('hidden');
-            document.getElementById('app-container').classList.remove('hidden');
-            document.getElementById('username-display').textContent = currentUser.username;
-            
-            // Load markets and update displays
-            markets = await getMarkets();
-            await updatePortfolioDisplays();
-        } else {
-            // Reset state on logout
-            currentUser = null;
-            markets = [];
-            portfolio = {
-                balance: 500,
-                bets: [],
-                history: [{ date: new Date().toISOString(), value: 500 }]
-            };
-            
-            document.getElementById('auth-container').classList.remove('hidden');
-            document.getElementById('app-container').classList.add('hidden');
-            document.getElementById('auth-form').reset();
         }
+        // ... rest of your auth state change handler
     } catch (error) {
         console.error('Auth state change error:', error);
-        showErrorMessage('Please refresh the page and try again');
+        showErrorMessage('Error with authentication. Please try again.');
     }
 });
 
-// Replace the chart manager with this improved version
 const chartManager = {
     instances: new Map(),
     
     destroyAll() {
         this.instances.forEach((chart, id) => {
             try {
-                chart.destroy();
+                if (chart && typeof chart.destroy === 'function') {
+                    chart.destroy();
+                }
             } catch (e) {
                 console.error(`Error destroying chart ${id}:`, e);
             }
@@ -429,7 +411,10 @@ const chartManager = {
     destroyChart(chartId) {
         if (this.instances.has(chartId)) {
             try {
-                this.instances.get(chartId).destroy();
+                const chart = this.instances.get(chartId);
+                if (chart && typeof chart.destroy === 'function') {
+                    chart.destroy();
+                }
                 this.instances.delete(chartId);
             } catch (e) {
                 console.error(`Error destroying chart ${chartId}:`, e);
@@ -437,8 +422,8 @@ const chartManager = {
         }
     },
 
-    createChart(ctx, market) {
-        if (!ctx || !market) return null;
+    createChart(ctx, market, options = {}) {
+        if (!ctx || !ctx.canvas) return null;
         
         const chartId = ctx.canvas.id;
         this.destroyChart(chartId);
@@ -462,19 +447,7 @@ const chartManager = {
                     responsive: true,
                     maintainAspectRatio: false,
                     animation: false,
-                    scales: {
-                        y: {
-                            min: 0,
-                            max: 1,
-                            grid: { color: 'rgba(226, 232, 240, 0.1)' },
-                            ticks: { color: '#E2E8F0' }
-                        },
-                        x: {
-                            grid: { color: 'rgba(226, 232, 240, 0.1)' },
-                            ticks: { color: '#E2E8F0' }
-                        }
-                    },
-                    plugins: { legend: { display: false } }
+                    ...options
                 }
             });
 
@@ -729,7 +702,13 @@ function updateMarketStats() {
     // Add stats updating logic here
     // Example: Create charts using Chart.js for category distribution and volume
 }
+
 function showAdminPanel() {
+    if (!currentUser?.isAdmin) {
+        showErrorMessage('Unauthorized access');
+        return;
+    }
+
     const modal = document.createElement('div');
     modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50';
     modal.innerHTML = `
@@ -738,7 +717,9 @@ function showAdminPanel() {
                 <div class="flex items-center justify-between">
                     <h2 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Admin Dashboard</h2>
                     <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-white transition-colors">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
                     </button>
                 </div>
             </div>
@@ -770,10 +751,10 @@ function showAdminPanel() {
                 <div class="col-span-4 space-y-4">
                     <div class="flex items-center gap-4 mb-4">
                         <input type="text" 
-                               id="market-search" 
+                               id="admin-market-search" 
                                placeholder="Search markets..." 
                                class="w-full p-3 rounded-lg bg-gray-800/50 border border-gray-700 focus:border-blue-500">
-                        <select id="market-filter" 
+                        <select id="admin-market-filter" 
                                 class="p-3 rounded-lg bg-gray-800/50 border border-gray-700 focus:border-blue-500">
                             <option value="all">All Categories</option>
                             <option value="ASB">ASB</option>
@@ -792,11 +773,293 @@ function showAdminPanel() {
             </div>
         </div>
     `;
+
     document.body.appendChild(modal);
     loadAdminMarkets();
 }
 
-// Function to show the quick price update modal
+// function showPriceUpdateModal(market) {
+//     const modal = document.createElement('div');
+//     modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[60]';
+//     modal.innerHTML = `
+//         <div class="bg-gray-900 rounded-xl p-6 max-w-md w-full">
+//             <div class="flex justify-between items-center mb-6">
+//                 <h3 class="text-xl font-bold text-blue-400">Update Market Price</h3>
+//                 <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-white">×</button>
+//             </div>
+            
+//             <h4 class="text-white mb-4">${market.title}</h4>
+//             <div class="mb-6">
+//                 <div class="flex justify-between text-sm text-gray-400 mb-2">
+//                     <span>Current: $${market.currentPrice.toFixed(3)}</span>
+//                     <span id="price-change" class="text-gray-400"></span>
+//                 </div>
+//                 <input type="range" 
+//                        id="price-slider" 
+//                        min="0" 
+//                        max="100" 
+//                        value="${market.currentPrice * 100}" 
+//                        class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer mb-2">
+//                 <div class="flex justify-between text-sm text-gray-400">
+//                     <span>$0.00</span>
+//                     <span id="new-price" class="text-blue-400">$${market.currentPrice.toFixed(3)}</span>
+//                     <span>$1.00</span>
+//                 </div>
+//             </div>
+
+//             <div class="flex gap-4">
+//                 <button onclick="submitPriceUpdate('${market.id}')" 
+//                         class="flex-1 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg transition-all">
+//                     Update Price
+//                 </button>
+//                 <button onclick="this.closest('.fixed').remove()" 
+//                         class="flex-1 border border-gray-700 text-gray-400 p-3 rounded-lg hover:bg-gray-800">
+//                     Cancel
+//                 </button>
+//             </div>
+//         </div>
+//     `;
+//     document.body.appendChild(modal);
+
+//     const slider = document.getElementById('price-slider');
+//     const newPriceDisplay = document.getElementById('new-price');
+//     const changeDisplay = document.getElementById('price-change');
+
+//     slider.oninput = () => {
+//         const newPrice = slider.value / 100;
+//         const change = ((newPrice - market.currentPrice) / market.currentPrice) * 100;
+//         newPriceDisplay.textContent = `$${newPrice.toFixed(3)}`;
+//         changeDisplay.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+//         changeDisplay.className = `text-sm ${change >= 0 ? 'text-green-400' : 'text-red-400'}`;
+//     };
+// }
+function showPriceUpdateModal(market) {
+    // Remove any existing modals
+    document.querySelectorAll('.modal-overlay').forEach(el => el.remove());
+
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center';
+    modal.style.zIndex = '10000'; // Ensure it's above admin panel
+    modal.innerHTML = `
+        <div class="bg-gray-900 rounded-xl p-6 max-w-md w-full">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold text-blue-400">Update Market Price</h3>
+                <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-white">×</button>
+            </div>
+            
+            <h4 class="text-white mb-4">${market.title}</h4>
+            <div class="space-y-6">
+                <div class="flex justify-between text-sm text-gray-400">
+                    <span>Current: $${market.currentPrice.toFixed(3)}</span>
+                    <span id="price-change"></span>
+                </div>
+
+                <div class="relative pt-1">
+                    <input type="range" 
+                           id="price-slider" 
+                           min="0" 
+                           max="100" 
+                           value="${market.currentPrice * 100}" 
+                           class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                    <div class="flex justify-between text-sm text-gray-400 mt-2">
+                        <span>$0.00</span>
+                        <span id="new-price" class="text-blue-400">$${market.currentPrice.toFixed(3)}</span>
+                        <span>$1.00</span>
+                    </div>
+                </div>
+
+                <div class="flex gap-4 pt-4">
+                    <button onclick="updateMarketPrice('${market.id}')" 
+                            class="flex-1 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg">
+                        Update Price
+                    </button>
+                    <button onclick="this.closest('.fixed').remove()" 
+                            class="flex-1 border border-gray-700 text-gray-400 p-3 rounded-lg hover:bg-gray-800">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    const slider = document.getElementById('price-slider');
+    const newPriceDisplay = document.getElementById('new-price');
+    const changeDisplay = document.getElementById('price-change');
+
+    slider.oninput = () => {
+        const newPrice = slider.value / 100;
+        const change = ((newPrice - market.currentPrice) / market.currentPrice) * 100;
+        newPriceDisplay.textContent = `$${newPrice.toFixed(3)}`;
+        changeDisplay.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+        changeDisplay.className = `text-sm ${change >= 0 ? 'text-green-400' : 'text-red-400'}`;
+    };
+}
+
+
+function showResolutionModal(market) {
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center';
+    modal.style.zIndex = '10000';
+    modal.innerHTML = `
+        <div class="bg-gray-900 rounded-xl p-6 max-w-md w-full">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold text-blue-400">Resolve Market</h3>
+                <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-white">×</button>
+            </div>
+            
+            <div class="mb-6">
+                <h4 class="text-white mb-2">${market.title}</h4>
+                <p class="text-gray-400">Select the final outcome for this market:</p>
+            </div>
+
+            <div class="space-y-4">
+                <button onclick="resolveMarket('${market.id}', true)" 
+                        class="w-full bg-green-600 hover:bg-green-700 text-white p-4 rounded-lg transition-all">
+                    Resolve as YES
+                </button>
+                <button onclick="resolveMarket('${market.id}', false)" 
+                        class="w-full bg-red-600 hover:bg-red-700 text-white p-4 rounded-lg transition-all">
+                    Resolve as NO
+                </button>
+                <button onclick="this.closest('.fixed').remove()" 
+                        class="w-full border border-gray-700 text-gray-400 p-4 rounded-lg hover:bg-gray-800">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+
+async function submitPriceUpdate(marketId, originalPrice) {
+    try {
+        const slider = document.getElementById('price-slider');
+        const newPrice = parseFloat(slider.value) / 100;
+        const priceChange = ((newPrice - originalPrice) / originalPrice) * 100;
+
+        await db.collection('markets').doc(marketId).update({
+            currentPrice: newPrice,
+            lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
+            priceHistory: firebase.firestore.FieldValue.arrayUnion({
+                date: new Date(),
+                price: newPrice,
+                change: priceChange
+            })
+        });
+
+        document.querySelector('.modal-overlay').remove();
+        showSuccessMessage(`Price updated (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)`);
+        await loadAdminMarkets(); // Refresh the admin panel
+        await updateMarkets(); // Refresh the markets display
+    } catch (error) {
+        console.error('Error updating price:', error);
+        showErrorMessage('Failed to update price');
+    }
+}
+
+async function submitResolution(marketId, result) {
+    try {
+        const market = markets.find(m => m.id === marketId);
+        if (!market) throw new Error('Market not found');
+
+        await db.runTransaction(async (transaction) => {
+            const marketRef = db.collection('markets').doc(marketId);
+            const marketDoc = await transaction.get(marketRef);
+
+            if (marketDoc.data().resolved) {
+                throw new Error('Market is already resolved');
+            }
+
+            const resolutionData = {
+                resolved: true,
+                finalResult: result,
+                resolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                resolutionPrice: result ? 1 : 0
+            };
+
+            transaction.update(marketRef, resolutionData);
+        });
+
+        document.querySelector('.fixed').remove();
+        showSuccessMessage(`Market resolved as ${result ? 'YES' : 'NO'}`);
+        await processPayouts(marketId, result);
+        await updateMarkets();
+    } catch (error) {
+        console.error('Error resolving market:', error);
+        showErrorMessage(error.message || 'Failed to resolve market');
+    }
+}
+async function processPayouts(marketId, result) {
+    try {
+        const usersRef = db.collection('users');
+        const marketBets = await usersRef.where('bets', 'array-contains-any', [{ marketId }]).get();
+
+        const batch = db.batch();
+        
+        marketBets.docs.forEach(doc => {
+            const userData = doc.data();
+            const matchingBets = userData.bets.filter(bet => bet.marketId === marketId);
+            
+            let payout = 0;
+            matchingBets.forEach(bet => {
+                if ((bet.position === 'yes' && result) || (bet.position === 'no' && !result)) {
+                    payout += bet.shares;
+                }
+            });
+
+            if (payout > 0) {
+                const userRef = usersRef.doc(doc.id);
+                batch.update(userRef, {
+                    funbucks: firebase.firestore.FieldValue.increment(payout)
+                });
+            }
+        });
+
+        await batch.commit();
+    } catch (error) {
+        console.error('Error processing payouts:', error);
+        showErrorMessage('Error processing payouts');
+    }
+}
+function formatCommentTimestamp(timestamp) {
+    if (!timestamp) return 'Just now';
+    
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const now = new Date();
+    const diff = now - date;
+    
+    // Less than a minute
+    if (diff < 60000) {
+        return 'Just now';
+    }
+    
+    // Less than an hour
+    if (diff < 3600000) {
+        const minutes = Math.floor(diff / 60000);
+        return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
+    }
+    
+    // Less than a day
+    if (diff < 86400000) {
+        const hours = Math.floor(diff / 3600000);
+        return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
+    }
+    
+    // Less than a week
+    if (diff < 604800000) {
+        const days = Math.floor(diff / 86400000);
+        return `${days} day${days !== 1 ? 's' : ''} ago`;
+    }
+    
+    // Default to date format
+    return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+    });
+}
 function showQuickPriceUpdate(marketId, currentPrice) {
     const modal = document.createElement('div');
     modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[60]';
@@ -896,6 +1159,7 @@ function showErrorMessage(message) {
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 3000);
 }
+
 async function loadAdminMarkets() {
     const marketsContainer = document.getElementById('admin-markets-list');
     if (!marketsContainer) return;
@@ -916,12 +1180,12 @@ async function loadAdminMarkets() {
                             class="bg-yellow-600 text-white px-3 py-1 rounded">
                         Edit
                     </button>
-                    <button onclick="updateMarketPrice('${doc.id}')" 
-                            class="bg-blue-600 text-white px-3 py-1 rounded">
+                    <button onclick="showPriceUpdateModal(${JSON.stringify(market).replace(/"/g, '&quot;')})" 
+                            class="bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700">
                         Update Price
                     </button>
-                    <button onclick="resolveMarket('${doc.id}')" 
-                            class="bg-green-600 text-white px-3 py-1 rounded">
+                    <button onclick="showResolutionModal(${JSON.stringify(market).replace(/"/g, '&quot;')})" 
+                            class="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700">
                         Resolve
                     </button>
                     <button onclick="deleteMarket('${doc.id}')" 
@@ -940,44 +1204,76 @@ async function loadAdminMarkets() {
 }
 
 async function updateMarketPrice(marketId) {
-    const newPrice = prompt('Enter new price (0-1):');
-    if (newPrice === null) return;
-
-    const price = parseFloat(newPrice);
-    if (isNaN(price) || price < 0 || price > 1) {
-        alert('Invalid price. Please enter a number between 0 and 1');
-        return;
-    }
-
     try {
-        await db.collection('markets').doc(marketId).update({
-            currentPrice: price,
-            [`priceHistory.${Date.now()}`]: price
+        const slider = document.getElementById('price-slider');
+        const newPrice = parseFloat(slider.value) / 100;
+        
+        const marketRef = db.collection('markets').doc(marketId);
+        await marketRef.update({
+            currentPrice: newPrice,
+            lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
+            priceHistory: firebase.firestore.FieldValue.arrayUnion({
+                date: new Date(),
+                price: newPrice
+            })
         });
-        alert('Price updated successfully!');
-        loadAdminMarkets();
+
+        document.querySelector('.fixed').remove();
+        showSuccessMessage('Price updated successfully');
+        await getMarkets();
+        await updateMarkets();
     } catch (error) {
         console.error('Error updating price:', error);
-        alert('Error updating price');
+        showErrorMessage('Failed to update price');
     }
 }
-async function resolveMarket(marketId) {
-    const result = confirm('Resolve market as Yes? (Cancel for No)');
+
+async function resolveMarket(marketId, result) {
     try {
-        const resolutionTime = Date.now();
-        await db.collection('markets').doc(marketId).update({
+        const marketRef = db.collection('markets').doc(marketId);
+        
+        await marketRef.update({
             resolved: true,
             finalResult: result,
-            resolvedAt: resolutionTime,
-            challengePeriodEnd: resolutionTime + (2 * 60 * 60 * 1000), // 2 hours
-            challenges: []
+            resolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            currentPrice: result ? 1 : 0,
+            priceHistory: firebase.firestore.FieldValue.arrayUnion({
+                date: new Date(),
+                price: result ? 1 : 0
+            })
         });
+
+        // Process payouts
+        const usersSnapshot = await db.collection('users').get();
+        const batch = db.batch();
+
+        for (const userDoc of usersSnapshot.docs) {
+            const userData = userDoc.data();
+            const relevantBets = (userData.bets || []).filter(bet => bet.marketId === marketId);
+            
+            let payout = 0;
+            relevantBets.forEach(bet => {
+                if ((bet.position === 'yes' && result) || (bet.position === 'no' && !result)) {
+                    payout += bet.shares;
+                }
+            });
+
+            if (payout > 0) {
+                batch.update(userDoc.ref, {
+                    funbucks: firebase.firestore.FieldValue.increment(payout)
+                });
+            }
+        }
+
+        await batch.commit();
         
-        startResolutionTimer(marketId, resolutionTime);
-        alert('Market resolved. Users have 2 hours to challenge this resolution.');
+        document.querySelector('.fixed').remove();
+        showSuccessMessage(`Market resolved as ${result ? 'YES' : 'NO'}`);
+        await getMarkets();
+        await updateMarkets();
     } catch (error) {
         console.error('Error resolving market:', error);
-        alert('Error resolving market');
+        showErrorMessage('Failed to resolve market');
     }
 }
 
@@ -1111,14 +1407,31 @@ async function deleteMarket(marketId) {
 async function getMarkets() {
     try {
         const snapshot = await db.collection('markets').orderBy('createdAt', 'desc').get();
-        markets = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            priceHistory: Array.isArray(doc.data().priceHistory) ? doc.data().priceHistory : [{
-                date: new Date(doc.data().createdAt?.seconds * 1000 || Date.now()),
-                price: doc.data().currentPrice
-            }]
-        }));
+        markets = snapshot.docs.map(doc => {
+            const data = doc.data();
+            const priceHistory = Array.isArray(data.priceHistory) ? data.priceHistory : [{
+                date: new Date(data.createdAt?.seconds * 1000 || Date.now()),
+                price: data.currentPrice,
+                change: 0
+            }];
+            
+            // Calculate price change from last update
+            const lastPrice = priceHistory.length > 1 ? 
+                priceHistory[priceHistory.length - 2].price : 
+                priceHistory[0].price;
+                
+            const priceChange = lastPrice ? 
+                ((data.currentPrice - lastPrice) / lastPrice) * 100 : 
+                0;
+
+            return {
+                id: doc.id,
+                ...data,
+                priceHistory,
+                priceChange
+            };
+        });
+        
         return markets;
     } catch (error) {
         console.error('Error fetching markets:', error);
@@ -1128,9 +1441,17 @@ async function getMarkets() {
 
 
 function formatDate(date) {
+    if (!date) return '';
+    if (date.toDate) {
+        date = date.toDate();
+    } else if (!(date instanceof Date)) {
+        date = new Date(date);
+    }
+    
+    if (isNaN(date.getTime())) return '';
+    
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const d = new Date(date);
-    return `${months[d.getMonth()]} ${d.getDate()} (${d.getFullYear().toString().slice(2)})`;
+    return `${months[date.getMonth()]} ${date.getDate()}`;
 }
 
 function formatCurrency(amount) {
@@ -1314,16 +1635,21 @@ function calculateBetValue(bet) {
     const market = markets.find(m => m.id === bet.marketId);
     if (!market) return { currentValue: 0, potentialPayout: 0, priceChange24h: 0 };
 
-    const currentPrice = bet.position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
+    // Ensure price is never exactly 0 or 1
+    const currentPrice = bet.position === 'yes' 
+        ? Math.max(0.001, Math.min(0.999, market.currentPrice))
+        : Math.max(0.001, Math.min(0.999, 1 - market.currentPrice));
+
     const currentValue = bet.shares * currentPrice;
     const potentialPayout = bet.shares;
-    const priceChange24h = calculatePriceChange24h(market);
+    const priceChange = bet.entryPrice > 0 
+        ? ((currentPrice - bet.entryPrice) / bet.entryPrice) * 100 
+        : 0;
 
     return {
-        currentValue,
-        potentialPayout,
-        priceChange24h,
-        priceChange: ((currentPrice - bet.entryPrice) / bet.entryPrice) * 100
+        currentValue: isFinite(currentValue) ? currentValue : 0,
+        potentialPayout: isFinite(potentialPayout) ? potentialPayout : 0,
+        priceChange: isFinite(priceChange) ? priceChange : 0
     };
 }
 
@@ -1458,20 +1784,21 @@ function showBettingModal(market, position) {
     if (!modal) return;
 
     const price = position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
-    
+    modal.style.zIndex = '10000';
     modal.classList.remove('hidden');
     
     document.getElementById('modal-market-info').innerHTML = `
         <div class="font-medium text-white">${market.title}</div>
-        <div class="text-sm text-gray-400">Position: ${position} @ $${price.toFixed(2)}</div>
+        <div class="text-sm text-gray-400">Position: ${position} @ $${price.toFixed(3)}</div>
     `;
     
-    const slider = document.getElementById('bet-amount');
-    slider.value = 10;
-    slider.max = portfolio.balance;
-    
+    const betAmount = document.getElementById('bet-amount');
+    betAmount.value = 10;
+    betAmount.max = portfolio.balance;
+    betAmount.min = 1;
+
     const updateBetDetails = () => {
-        const amount = parseFloat(slider.value);
+        const amount = parseFloat(betAmount.value);
         const shares = amount / price;
         document.getElementById('bet-details').innerHTML = `
             <div class="flex justify-between mb-2">
@@ -1485,19 +1812,14 @@ function showBettingModal(market, position) {
         `;
     };
     
-    slider.oninput = updateBetDetails;
+    betAmount.oninput = updateBetDetails;
     updateBetDetails();
     
     const confirmBtn = document.getElementById('confirm-bet');
     const cancelBtn = document.getElementById('cancel-bet');
     
-    // Remove any existing event listeners
-    confirmBtn.replaceWith(confirmBtn.cloneNode(true));
-    cancelBtn.replaceWith(cancelBtn.cloneNode(true));
-    
-    // Add new event listeners
-    document.getElementById('confirm-bet').onclick = () => placeBet(market.id, position);
-    document.getElementById('cancel-bet').onclick = () => modal.classList.add('hidden');
+    confirmBtn.onclick = () => placeBet(market.id, position);
+    cancelBtn.onclick = () => modal.classList.add('hidden');
 }
 
 async function placeBet(marketId, position) {
@@ -1507,60 +1829,70 @@ async function placeBet(marketId, position) {
             return;
         }
 
-        const userRef = db.collection('users').doc(auth.currentUser.uid);
-        const marketRef = db.collection('markets').doc(marketId);
+        const market = markets.find(m => m.id === marketId);
+        if (!market) throw new Error('Market not found');
 
+        const amount = parseFloat(document.getElementById('bet-amount').value);
+        const price = position === 'yes' 
+            ? Math.max(0.001, Math.min(0.999, market.currentPrice))
+            : Math.max(0.001, Math.min(0.999, 1 - market.currentPrice));
+
+        const shares = price > 0 ? amount / price : 0;
+
+        if (!isFinite(shares) || shares <= 0) {
+            showErrorMessage('Invalid share calculation');
+            return;
+        }
+
+        if (amount > portfolio.balance) {
+            showErrorMessage('Insufficient FunBucks');
+            return;
+        }
+
+        const bet = {
+            marketId,
+            position,
+            amount,
+            shares,
+            entryPrice: price,
+            date: new Date().toISOString(),
+            marketTitle: market.title,
+            marketImage: market.image
+        };
+
+        // First update the user document
+        const userRef = db.collection('users').doc(auth.currentUser.uid);
+        
         await db.runTransaction(async (transaction) => {
             const userDoc = await transaction.get(userRef);
-            const marketDoc = await transaction.get(marketRef);
-
             if (!userDoc.exists) throw new Error('User not found');
-            if (!marketDoc.exists) throw new Error('Market not found');
 
             const userData = userDoc.data();
-            const market = marketDoc.data();
-
-            const amount = parseFloat(document.getElementById('bet-amount').value);
-            const price = position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
-            const shares = amount / price;
-
-            if (amount > userData.funbucks) throw new Error('Insufficient funds');
-
-            const bet = {
-                marketId,
-                position,
-                amount,
-                shares,
-                entryPrice: price,
-                date: new Date().toISOString(),
-                marketTitle: market.title,
-                marketImage: market.image
-            };
-
-            const newBalance = userData.funbucks - amount;
-            const newBets = [...(userData.bets || []), bet];
-            const newHistory = [...(userData.history || []), {
-                date: new Date().toISOString(),
-                value: newBalance
-            }];
+            const newBalance = (userData.funbucks || 0) - amount;
+            const currentBets = userData.bets || [];
+            const currentHistory = userData.history || [];
 
             transaction.update(userRef, {
                 funbucks: newBalance,
-                bets: newBets,
-                history: newHistory
+                bets: [...currentBets, bet],
+                history: [...currentHistory, {
+                    date: new Date().toISOString(),
+                    value: calculateNetworth()
+                }]
             });
-
-            // Update local state
-            portfolio.balance = newBalance;
-            portfolio.bets = newBets;
-            portfolio.history = newHistory;
         });
 
-        // Update UI
+        portfolio.balance -= amount;
+        portfolio.bets.push(bet);
+        portfolio.history.push({
+            date: new Date().toISOString(),
+            value: calculateNetworth()
+        });
+
         document.getElementById('betting-modal').classList.add('hidden');
-        await updatePortfolioDisplays();
-        await updateMarketsAndCharts();
         showSuccessMessage('Bet placed successfully!');
+        await updatePortfolioDisplays();
+        await updateMarkets();
 
     } catch (error) {
         console.error('Error placing bet:', error);
@@ -1571,9 +1903,11 @@ async function placeBet(marketId, position) {
 function calculateNetworth() {
     const betsValue = portfolio.bets.reduce((total, bet) => {
         const { currentValue } = calculateBetValue(bet);
-        return total + currentValue;
+        return total + (isFinite(currentValue) ? currentValue : 0);
     }, 0);
-    return portfolio.balance + betsValue;
+    
+    const networth = portfolio.balance + betsValue;
+    return isFinite(networth) ? networth : portfolio.balance;
 }
 
 function createChart(ctx, market) {
@@ -1925,7 +2259,8 @@ async function postComment(marketId) {
 }
 
 async function loadComments(marketId) {
-    const container = document.getElementById(`comments-list-${marketId}`);
+    const commentsContainer = document.getElementById(`comments-list-${marketId}`);
+    if (!commentsContainer) return;
     
     try {
         const snapshot = await db.collection('markets')
@@ -1934,28 +2269,46 @@ async function loadComments(marketId) {
             .orderBy('timestamp', 'desc')
             .get();
 
-        if (snapshot.empty) {
-            container.innerHTML = '<div class="text-center text-gray-400">No comments yet. Be the first to comment!</div>';
+        const comments = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
+        if (comments.length === 0) {
+            commentsContainer.innerHTML = `
+                <div class="text-center text-gray-400 py-8">
+                    Be the first to comment on this market!
+                </div>
+            `;
             return;
         }
 
-        container.innerHTML = snapshot.docs.map(doc => {
-            const comment = doc.data();
-            return `
-                <div class="bg-gray-800 rounded-lg p-4">
-                    <div class="flex justify-between mb-2">
-                        <div class="font-medium text-blue-300">${comment.username}</div>
-                        <div class="text-sm text-gray-400">
-                            ${comment.timestamp ? new Date(comment.timestamp.toDate()).toLocaleString() : 'Just now'}
-                        </div>
+        commentsContainer.innerHTML = comments.map(comment => `
+            <div class="bg-gray-800 rounded-lg p-4">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <span class="font-medium text-blue-300">${comment.username}</span>
+                        <span class="text-xs text-gray-400">
+                            ${formatCommentTimestamp(comment.timestamp)}
+                        </span>
                     </div>
-                    <div class="text-gray-300">${comment.text}</div>
+                    ${comment.userId === auth.currentUser?.uid ? `
+                        <button onclick="deleteComment('${marketId}', '${comment.id}')"
+                                class="text-red-400 hover:text-red-300 text-sm">
+                            Delete
+                        </button>
+                    ` : ''}
                 </div>
-            `;
-        }).join('');
+                <p class="text-gray-300">${comment.text}</p>
+            </div>
+        `).join('');
     } catch (error) {
         console.error('Error loading comments:', error);
-        container.innerHTML = '<div class="text-center text-red-400">Error loading comments</div>';
+        commentsContainer.innerHTML = `
+            <div class="text-center text-red-400 py-8">
+                Error loading comments. Please try again later.
+            </div>
+        `;
     }
 }
 
@@ -2922,3 +3275,6 @@ window.addEventListener('load', () => {
 </script>
 </body>
 </html>
+<!-- 
+I'm making a prediction market. My Code is attached. I need you to help me with a couple things. First, I want you to change the number field when making a bet to a slider, where the maximum value for the slider goes up to the maximum amunt of avaliable funbucks. I also need you to help me in the admin panel with Update Price and Resolve. When I try to Update Price I get this error: "`Error updating price: FirebaseError: No document to update: projects/polyclone-charlito/databases/(default)/documents/markets/undefined`" and when i try to resolve the market i get this error: "`Error resolving market: FirebaseError: No document to update: projects/polyclone-charlito/databases/(default)/documents/markets/undefined`". I think the problem is the name of the market, because undefined is not the correct name. Please fix these errors and make sure both update price and resolve market work as intended.
+-->
