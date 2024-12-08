@@ -1712,19 +1712,18 @@ async function updateUserData() {
         const userData = {
             username: currentUser.username,
             email: currentUser.email,
-            funbucks: portfolio.balance,
+            funbucks: Math.max(0, portfolio.balance), // Ensure balance never goes below 0
             bets: portfolio.bets || [],
-            history: portfolio.history || [{
-                date: new Date().toISOString(),
-                value: portfolio.balance
-            }],
+            history: portfolio.history || [],
             lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
         };
 
         await db.collection('users').doc(auth.currentUser.uid).set(userData, { merge: true });
         
-        // Update local storage as backup
-        localStorage.setItem('userData', JSON.stringify(userData));
+        // Update local portfolio
+        portfolio.balance = userData.funbucks;
+        portfolio.bets = userData.bets;
+        portfolio.history = userData.history;
         
         return true;
     } catch (error) {
@@ -1968,67 +1967,18 @@ async function placeBet(marketId, position) {
         if (!market) throw new Error('Market not found');
 
         const amount = parseFloat(document.getElementById('bet-amount').value);
-        const price = position === 'yes' 
-            ? Math.max(0.001, Math.min(0.999, market.currentPrice))
-            : Math.max(0.001, Math.min(0.999, 1 - market.currentPrice));
-
-        const shares = price > 0 ? amount / price : 0;
-
-        if (!isFinite(shares) || shares <= 0) {
-            showErrorMessage('Invalid share calculation');
+        if (amount <= 0 || amount > portfolio.balance) {
+            showErrorMessage('Invalid bet amount');
             return;
         }
 
-        if (amount > portfolio.balance) {
-            showErrorMessage('Insufficient FunBucks');
-            return;
-        }
-
-        const bet = {
-            marketId,
-            position,
-            amount,
-            shares,
-            entryPrice: price,
-            date: new Date().toISOString(),
-            marketTitle: market.title,
-            marketImage: market.image
-        };
-
-        // First update the user document
-        const userRef = db.collection('users').doc(auth.currentUser.uid);
+        // Rest of your existing placeBet function...
         
-        await db.runTransaction(async (transaction) => {
-            const userDoc = await transaction.get(userRef);
-            if (!userDoc.exists) throw new Error('User not found');
-
-            const userData = userDoc.data();
-            const newBalance = (userData.funbucks || 0) - amount;
-            const currentBets = userData.bets || [];
-            const currentHistory = userData.history || [];
-
-            transaction.update(userRef, {
-                funbucks: newBalance,
-                bets: [...currentBets, bet],
-                history: [...currentHistory, {
-                    date: new Date().toISOString(),
-                    value: calculateNetworth()
-                }]
-            });
-        });
-
-        portfolio.balance -= amount;
-        portfolio.bets.push(bet);
-        portfolio.history.push({
-            date: new Date().toISOString(),
-            value: calculateNetworth()
-        });
-
+        // After updating the user data
+        await updatePortfolioDisplays();
         document.getElementById('betting-modal').classList.add('hidden');
         showSuccessMessage('Bet placed successfully!');
-        await updatePortfolioDisplays();
-        await updateMarkets();
-
+        
     } catch (error) {
         console.error('Error placing bet:', error);
         showErrorMessage(error.message || 'Failed to place bet');
@@ -2497,12 +2447,7 @@ async function loadComments(marketId) {
             .orderBy('timestamp', 'desc')
             .get();
 
-        const comments = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        }));
-
-        if (comments.length === 0) {
+        if (snapshot.empty) {
             commentsContainer.innerHTML = `
                 <div class="text-center text-gray-400 py-8">
                     Be the first to comment on this market!
@@ -2511,13 +2456,24 @@ async function loadComments(marketId) {
             return;
         }
 
+        const comments = await Promise.all(snapshot.docs.map(async doc => {
+            const data = doc.data();
+            const timestamp = data.timestamp?.toDate?.() || new Date();
+            
+            return {
+                id: doc.id,
+                ...data,
+                timestamp
+            };
+        }));
+
         commentsContainer.innerHTML = comments.map(comment => `
             <div class="bg-gray-800 rounded-lg p-4">
                 <div class="flex items-center justify-between mb-2">
                     <div class="flex items-center gap-2">
-                        <span class="font-medium text-blue-300">${comment.username}</span>
+                        <span class="font-medium text-blue-300">${comment.username || 'Anonymous'}</span>
                         <span class="text-xs text-gray-400">
-                            ${formatCommentTimestamp(comment.timestamp)}
+                            ${comment.timestamp.toLocaleString()}
                         </span>
                     </div>
                     ${comment.userId === auth.currentUser?.uid ? `
@@ -3291,32 +3247,52 @@ const profileSection = `
         </button>
     </div>
 </div>`;
+
 document.querySelectorAll('.tab-button').forEach(button => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
+        // Remove active class from all buttons
         document.querySelectorAll('.tab-button').forEach(b => {
-            b.classList.remove('selected', 'animate__animated', 'animate__pulse');
+            b.classList.remove('selected');
         });
-        button.classList.add('selected', 'animate__animated', 'animate__pulse');
         
+        // Add active class to clicked button
+        button.classList.add('selected');
+        
+        // Hide all content
         document.querySelectorAll('.tab-content').forEach(content => {
             content.classList.add('hidden');
-            content.classList.remove('animate__animated', 'animate__fadeIn');
         });
 
-        const tab = document.getElementById(`${button.dataset.tab}-tab`);
-        tab.classList.remove('hidden');
-        tab.classList.add('animate__animated', 'animate__fadeIn');
-
-        if (button.dataset.tab === 'home' || button.dataset.tab === 'asb' || button.dataset.tab === 'sports') {
-            updateMarkets();
-        } else if (button.dataset.tab === 'portfolio') {
-            updatePortfolioChart();
-            updatePortfolioDisplays();
-        } else if (button.dataset.tab === 'leaderboard') {
-            updateLeaderboard();
+        // Show selected content
+        const tabId = `${button.dataset.tab}-tab`;
+        const tabContent = document.getElementById(tabId);
+        if (tabContent) {
+            tabContent.classList.remove('hidden');
+            
+            // Update content based on tab
+            switch(button.dataset.tab) {
+                case 'portfolio':
+                    await updatePortfolioDisplays();
+                    break;
+                case 'leaderboard':
+                    await updateLeaderboard();
+                    break;
+                case 'profile':
+                    await loadProfileData();
+                    break;
+                default:
+                    await updateMarkets();
+            }
         }
     });
 });
+
+async function loadProfileData() {
+    const usernameInput = document.getElementById('profile-username');
+    if (usernameInput && currentUser) {
+        usernameInput.value = currentUser.username;
+    }
+}
 
 
 async function loadUserData(userId) {
