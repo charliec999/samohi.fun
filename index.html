@@ -3076,14 +3076,10 @@ async function updateLeaderboard() {
     if (!leaderboardList) return;
 
     try {
-        // Clear existing charts first
         chartManager.destroyAll();
+        leaderboardList.innerHTML = '<div class="text-center text-gray-400">Loading leaderboard...</div>';
 
-        const snapshot = await db.collection('users')
-            .orderBy('funbucks', 'desc')
-            .limit(10)
-            .get();
-
+        const snapshot = await db.collection('users').get();
         const leaders = await Promise.all(snapshot.docs.map(async doc => {
             const userData = doc.data();
             const networth = calculateNetworth(userData);
@@ -3094,98 +3090,27 @@ async function updateLeaderboard() {
             };
         }));
 
+        // Sort by networth
         leaders.sort((a, b) => b.networth - a.networth);
 
-        leaderboardList.innerHTML = leaders.map((user, index) => `
-            <div class="bg-gray-800 p-6 rounded-lg border border-blue-900 cursor-pointer hover:border-blue-500 transition-colors mb-6"
-                 onclick="showUserProfile('${user.id}')">
-                <div class="flex items-center justify-between mb-4">
+        // Take top 10
+        const top10 = leaders.slice(0, 10);
+
+        leaderboardList.innerHTML = top10.map((user, index) => `
+            <div class="bg-gray-800 p-6 rounded-lg border border-blue-900 transition-colors mb-6">
+                <div class="flex items-center justify-between">
                     <div class="flex items-center gap-4">
                         <div class="text-2xl font-bold ${index < 3 ? 'text-yellow-400' : 'text-gray-400'}">#${index + 1}</div>
-                        <img src="${user.profilePicture || DEFAULT_PROFILE_PIC}" 
-                             class="w-12 h-12 rounded-full object-cover border-2 border-blue-500">
                         <div>
-                            <div class="font-medium text-blue-300">${user.username}</div>
-                            <div class="text-green-400">Balance: ${formatCurrency(user.funbucks)}</div>
+                            <div class="font-medium text-blue-300">${user.username || 'Anonymous'}</div>
+                            <div class="text-green-400">Balance: ${formatCurrency(user.funbucks || 0)}</div>
                             <div class="text-blue-400">Networth: ${formatCurrency(user.networth)}</div>
                         </div>
                     </div>
                     <div class="text-gray-400">${user.bets?.length || 0} Active Bets</div>
                 </div>
-                <div class="h-32">
-                    <canvas id="user-chart-${user.id}"></canvas>
-                </div>
             </div>
         `).join('');
-
-        // Create charts for each user
-        leaders.forEach(user => {
-            const ctx = document.getElementById(`user-chart-${user.id}`)?.getContext('2d');
-            if (!ctx) return;
-
-            const historyData = (user.history || [])
-                .slice(-30)
-                .map(item => ({
-                    date: new Date(item.date),
-                    value: item.value
-                }))
-                .sort((a, b) => a.date - b.date);
-
-            if (historyData.length === 0) {
-                historyData.push({
-                    date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-                    value: user.funbucks || 500
-                });
-            }
-
-            try {
-                const chart = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: historyData.map(item => formatDate(item.date)),
-                        datasets: [{
-                            label: 'Portfolio Value',
-                            data: historyData.map(item => item.value),
-                            borderColor: '#4299E1',
-                            backgroundColor: 'rgba(66, 153, 225, 0.1)',
-                            tension: 0.4,
-                            fill: true
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            y: {
-                                beginAtZero: true,
-                                grid: {
-                                    color: 'rgba(255, 255, 255, 0.1)'
-                                },
-                                ticks: {
-                                    color: '#E2E8F0'
-                                }
-                            },
-                            x: {
-                                grid: {
-                                    color: 'rgba(255, 255, 255, 0.1)'
-                                },
-                                ticks: {
-                                    color: '#E2E8F0'
-                                }
-                            }
-                        },
-                        plugins: {
-                            legend: {
-                                display: false
-                            }
-                        }
-                    }
-                });
-                chartManager.instances.set(`user-chart-${user.id}`, chart);
-            } catch (error) {
-                console.error('Error creating user chart:', error);
-            }
-        });
     } catch (error) {
         console.error('Error updating leaderboard:', error);
         leaderboardList.innerHTML = '<div class="text-red-400">Error loading leaderboard</div>';
@@ -3456,14 +3381,12 @@ async function updateUserData() {
 
 auth.onAuthStateChanged(async (user) => {
     try {
-        chartManager.destroyAll();
-        
         if (user) {
             const userDoc = await db.collection('users').doc(user.uid).get();
             
             if (!userDoc.exists) {
                 const initialData = {
-                    username: user.email.split('@')[0],
+                    username: user.displayName || user.email.split('@')[0],
                     email: user.email,
                     funbucks: 500,
                     bets: [],
@@ -3473,7 +3396,6 @@ auth.onAuthStateChanged(async (user) => {
                     }],
                     createdAt: firebase.firestore.FieldValue.serverTimestamp()
                 };
-                
                 await db.collection('users').doc(user.uid).set(initialData);
                 currentUser = { uid: user.uid, ...initialData };
                 portfolio = {
@@ -3485,44 +3407,55 @@ auth.onAuthStateChanged(async (user) => {
                 const userData = userDoc.data();
                 currentUser = { uid: user.uid, ...userData };
                 portfolio = {
-                    balance: userData.funbucks || 500,
+                    balance: userData.funbucks, // Remove the || 500 fallback
                     bets: userData.bets || [],
-                    history: userData.history || [{
-                        date: new Date().toISOString(),
-                        value: userData.funbucks || 500
-                    }]
+                    history: userData.history || []
                 };
             }
-
+            
             document.getElementById('auth-container').classList.add('hidden');
             document.getElementById('app-container').classList.remove('hidden');
             document.getElementById('username-display').textContent = currentUser.username;
             
-            // Only proceed with updates if we have valid data
-            if (currentUser && portfolio) {
-                await getMarkets();
-                await updatePortfolioDisplays();
-                await updateMarkets();
-            }
+            await updatePortfolioDisplays();
+            await getMarkets();
+            await updateMarkets();
         } else {
-            // Reset state on logout
+            // Reset state
             currentUser = null;
             markets = [];
             portfolio = {
-                balance: 500,
+                balance: 0,
                 bets: [],
-                history: [{ date: new Date().toISOString(), value: 500 }]
+                history: []
             };
             
             document.getElementById('auth-container').classList.remove('hidden');
             document.getElementById('app-container').classList.add('hidden');
-            document.getElementById('auth-form').reset();
         }
     } catch (error) {
         console.error('Auth state change error:', error);
-        showErrorMessage('Please refresh the page and try again');
+        showErrorMessage('Error loading user data');
     }
 });
+async function updateUsername() {
+    const newUsername = document.getElementById('profile-username').value;
+    if (!newUsername || !auth.currentUser) return;
+
+    try {
+        await db.collection('users').doc(auth.currentUser.uid).update({
+            username: newUsername
+        });
+        
+        currentUser.username = newUsername;
+        document.getElementById('username-display').textContent = newUsername;
+        showSuccessMessage('Username updated successfully');
+    } catch (error) {
+        console.error('Error updating username:', error);
+        showErrorMessage('Failed to update username');
+    }
+}
+document.getElementById('save-profile')?.addEventListener('click', updateUsername);
 async function recoverUserData() {
     if (!auth.currentUser) return;
     
