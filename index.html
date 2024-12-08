@@ -416,6 +416,7 @@ auth.onAuthStateChanged(async (user) => {
                         date: new Date().toISOString(),
                         value: 500
                     }],
+                    isAdmin: false,
                     createdAt: firebase.firestore.FieldValue.serverTimestamp()
                 };
                 
@@ -428,31 +429,41 @@ auth.onAuthStateChanged(async (user) => {
                 };
             } else {
                 const userData = userDoc.data();
-                currentUser = { uid: user.uid, ...userData };
+                currentUser = { 
+                    uid: user.uid, 
+                    email: user.email,
+                    isAdmin: userData.isAdmin === true,
+                    ...userData 
+                };
                 portfolio = {
-                    balance: userData.funbucks || 500,
+                    balance: userData.funbucks,
                     bets: userData.bets || [],
-                    history: userData.history || [{
-                        date: new Date().toISOString(),
-                        value: userData.funbucks || 500
-                    }]
+                    history: userData.history || []
                 };
             }
 
-            const authContainer = document.getElementById('auth-container');
-            const appContainer = document.getElementById('app-container');
-            const usernameDisplay = document.getElementById('username-display');
-            
-            if (authContainer) authContainer.classList.add('hidden');
-            if (appContainer) appContainer.classList.remove('hidden');
-            if (usernameDisplay) usernameDisplay.textContent = currentUser.username;
-            
-            if (currentUser && portfolio) {
-                await getMarkets();
-                await updatePortfolioDisplays();
-                await updateMarkets();
+            // Update UI
+            document.getElementById('auth-container').classList.add('hidden');
+            document.getElementById('app-container').classList.remove('hidden');
+            document.getElementById('username-display').textContent = currentUser.username;
+
+            // Check admin status and show/hide admin panel button
+            const adminButton = document.getElementById('admin-panel-btn');
+            if (adminButton) {
+                if (currentUser.isAdmin === true) {
+                    adminButton.classList.remove('hidden');
+                    adminButton.onclick = () => showAdminPanel();
+                } else {
+                    adminButton.classList.add('hidden');
+                }
             }
+
+            // Load data
+            await getMarkets();
+            await updatePortfolioDisplays();
+            await updateMarkets();
         } else {
+            // Reset state on logout
             currentUser = null;
             markets = [];
             portfolio = {
@@ -461,14 +472,15 @@ auth.onAuthStateChanged(async (user) => {
                 history: [{ date: new Date().toISOString(), value: 500 }]
             };
             
-            const authContainer = document.getElementById('auth-container');
-            const appContainer = document.getElementById('app-container');
-            if (authContainer) authContainer.classList.remove('hidden');
-            if (appContainer) appContainer.classList.add('hidden');
+            document.getElementById('auth-container').classList.remove('hidden');
+            document.getElementById('app-container').classList.add('hidden');
+            
+            const authForm = document.getElementById('auth-form');
+            if (authForm) authForm.reset();
         }
     } catch (error) {
         console.error('Auth state change error:', error);
-        showErrorMessage('Please refresh the page and try again');
+        showErrorMessage('Error with authentication. Please try again.');
     }
 });
 
