@@ -163,7 +163,7 @@
                     <img src="https://www.google.com/favicon.ico" class="w-5 h-5" alt="Google">
                     Sign in with Google
                 </button>
-                <p class="text-sm text-gray-400 text-center">Only @smmusd.org accounts are allowed</p>
+                <p class="text-sm text-gray-400 text-center">Only @smmk12.org accounts are allowed</p>
                 <div id="error-message" class="text-red-400 hidden"></div>
             </div>
         </div>
@@ -360,9 +360,9 @@ document.getElementById('google-signin').addEventListener('click', async () => {
         await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
         const result = await auth.signInWithPopup(provider);
         
-        if (!result.user.email.endsWith('@smmusd.org')) {
+        if (!result.user.email.endsWith('@ssmmk12.org')) {
             await auth.signOut();
-            showErrorMessage('Please use your SMMUSD account');
+            showErrorMessage('Please use your smmk12 account');
             return;
         }
 
