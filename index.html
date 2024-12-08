@@ -3070,16 +3070,50 @@ document.getElementById('save-profile-picture')?.addEventListener('click', async
         alert('Error updating profile picture');
     }
 });
+document.addEventListener('DOMContentLoaded', () => {
+    const saveProfileBtn = document.getElementById('save-profile');
+    if (saveProfileBtn) {
+        saveProfileBtn.addEventListener('click', async () => {
+            const usernameInput = document.getElementById('profile-username');
+            const newUsername = usernameInput?.value;
+            
+            if (!newUsername || !auth.currentUser) {
+                showErrorMessage('Please enter a username');
+                return;
+            }
+
+            try {
+                await db.collection('users').doc(auth.currentUser.uid).update({
+                    username: newUsername
+                });
+                
+                currentUser.username = newUsername;
+                document.getElementById('username-display').textContent = newUsername;
+                showSuccessMessage('Username updated successfully!');
+            } catch (error) {
+                console.error('Error updating username:', error);
+                showErrorMessage('Failed to update username');
+            }
+        });
+    }
+});
 
 async function updateLeaderboard() {
     const leaderboardList = document.getElementById('leaderboard-list');
     if (!leaderboardList) return;
 
     try {
+        // Clear existing charts
         chartManager.destroyAll();
-        leaderboardList.innerHTML = '<div class="text-center text-gray-400">Loading leaderboard...</div>';
 
-        const snapshot = await db.collection('users').get();
+        // Show loading state
+        leaderboardList.innerHTML = '<div class="text-center text-gray-400 py-8">Loading leaderboard...</div>';
+
+        const snapshot = await db.collection('users')
+            .orderBy('funbucks', 'desc')
+            .limit(10)
+            .get();
+
         const leaders = await Promise.all(snapshot.docs.map(async doc => {
             const userData = doc.data();
             const networth = calculateNetworth(userData);
@@ -3090,17 +3124,17 @@ async function updateLeaderboard() {
             };
         }));
 
-        // Sort by networth
         leaders.sort((a, b) => b.networth - a.networth);
 
-        // Take top 10
-        const top10 = leaders.slice(0, 10);
-
-        leaderboardList.innerHTML = top10.map((user, index) => `
-            <div class="bg-gray-800 p-6 rounded-lg border border-blue-900 transition-colors mb-6">
-                <div class="flex items-center justify-between">
+        leaderboardList.innerHTML = leaders.map((user, index) => `
+            <div class="bg-gray-800 p-6 rounded-lg border border-blue-900 cursor-pointer hover:border-blue-500 transition-colors mb-6"
+                 onclick="showUserProfile('${user.id}')">
+                <div class="flex items-center justify-between mb-4">
                     <div class="flex items-center gap-4">
                         <div class="text-2xl font-bold ${index < 3 ? 'text-yellow-400' : 'text-gray-400'}">#${index + 1}</div>
+                        <img src="${user.profilePicture || DEFAULT_PROFILE_PIC}" 
+                             class="w-12 h-12 rounded-full object-cover border-2 border-blue-500" 
+                             onerror="this.src='${DEFAULT_PROFILE_PIC}'">
                         <div>
                             <div class="font-medium text-blue-300">${user.username || 'Anonymous'}</div>
                             <div class="text-green-400">Balance: ${formatCurrency(user.funbucks || 0)}</div>
@@ -3109,11 +3143,83 @@ async function updateLeaderboard() {
                     </div>
                     <div class="text-gray-400">${user.bets?.length || 0} Active Bets</div>
                 </div>
+                <div class="h-32">
+                    <canvas id="user-chart-${user.id}"></canvas>
+                </div>
             </div>
         `).join('');
+
+        // Create charts for each user
+        leaders.forEach(user => {
+            const ctx = document.getElementById(`user-chart-${user.id}`)?.getContext('2d');
+            if (!ctx) return;
+
+            const historyData = (user.history || [])
+                .slice(-30)
+                .map(item => ({
+                    date: new Date(item.date),
+                    value: item.value
+                }))
+                .sort((a, b) => a.date - b.date);
+
+            if (historyData.length === 0) {
+                historyData.push({
+                    date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+                    value: user.funbucks || 0
+                });
+            }
+
+            try {
+                const chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: historyData.map(item => formatDate(item.date)),
+                        datasets: [{
+                            label: 'Portfolio Value',
+                            data: historyData.map(item => item.value),
+                            borderColor: '#4299E1',
+                            backgroundColor: 'rgba(66, 153, 225, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.1)'
+                                },
+                                ticks: {
+                                    color: '#E2E8F0'
+                                }
+                            },
+                            x: {
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.1)'
+                                },
+                                ticks: {
+                                    color: '#E2E8F0'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        }
+                    }
+                });
+                chartManager.instances.set(`user-chart-${user.id}`, chart);
+            } catch (error) {
+                console.error('Error creating user chart:', error);
+            }
+        });
     } catch (error) {
         console.error('Error updating leaderboard:', error);
-        leaderboardList.innerHTML = '<div class="text-red-400">Error loading leaderboard</div>';
+        leaderboardList.innerHTML = '<div class="text-red-400 text-center py-8">Error loading leaderboard</div>';
     }
 }
 
