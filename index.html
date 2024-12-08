@@ -350,28 +350,25 @@ const storage = firebase.storage && firebase.storage();
 
 const provider = new firebase.auth.GoogleAuthProvider();
 provider.setCustomParameters({
-    'hd': 'smmusd.org',
-    'prompt': 'select_account'
+    'hd': 'smmk12.org',
 });
 
-document.getElementById('google-signin').addEventListener('click', async () => {
+document.getElementById('google-signin')?.addEventListener('click', async () => {
     try {
-        // Enable persistence first
-        await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
         const result = await auth.signInWithPopup(provider);
         
-        if (!result.user.email.endsWith('@ssmmk12.org')) {
+        if (!result.user.email.endsWith('@smmk12.org')) {
             await auth.signOut();
-            showErrorMessage('Please use your smmk12 account');
+            showErrorMessage('Please use your SMMK12 account');
             return;
         }
 
         const userRef = db.collection('users').doc(result.user.uid);
-        const doc = await userRef.get();
+        const userDoc = await userRef.get();
 
-        if (!doc.exists) {
+        if (!userDoc.exists) {
             await userRef.set({
-                username: result.user.displayName,
+                username: result.user.displayName || result.user.email.split('@')[0],
                 email: result.user.email,
                 funbucks: 500,
                 bets: [],
@@ -384,7 +381,11 @@ document.getElementById('google-signin').addEventListener('click', async () => {
         }
     } catch (error) {
         console.error('Auth error:', error);
-        showErrorMessage('Please enable popups for this site');
+        if (error.code === 'auth/popup-blocked') {
+            showErrorMessage('Please enable popups for this site');
+        } else {
+            showErrorMessage(error.message);
+        }
     }
 });
 
@@ -399,40 +400,59 @@ const isAdmin = async (userId) => {
         return false;
     }
 };
+
 auth.onAuthStateChanged(async (user) => {
     try {
-        chartManager.destroyAll();
         if (user) {
             const userDoc = await db.collection('users').doc(user.uid).get();
             
-            if (userDoc.exists) {
-                const userData = userDoc.data();
-                currentUser = {
-                    uid: user.uid,
+            if (!userDoc.exists) {
+                const initialData = {
+                    username: user.displayName || user.email.split('@')[0],
                     email: user.email,
-                    isAdmin: userData.isAdmin || false, // Make sure to include isAdmin
-                    ...userData
+                    funbucks: 500,
+                    bets: [],
+                    history: [{
+                        date: new Date().toISOString(),
+                        value: 500
+                    }],
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
                 };
                 
-                // Update UI
-                document.getElementById('auth-container').classList.add('hidden');
-                document.getElementById('app-container').classList.remove('hidden');
-                document.getElementById('username-display').textContent = userData.username;
-                
-                // Check admin status and show/hide admin panel button
-                const adminButton = document.getElementById('admin-panel-btn');
-                if (currentUser.isAdmin) {
-                    adminButton?.classList.remove('hidden');
-                    adminButton.onclick = () => showAdminPanel();
-                } else {
-                    adminButton?.classList.add('hidden');
-                }
-                
-                // Load markets and update displays
+                await db.collection('users').doc(user.uid).set(initialData);
+                currentUser = { uid: user.uid, ...initialData };
+                portfolio = {
+                    balance: initialData.funbucks,
+                    bets: initialData.bets,
+                    history: initialData.history
+                };
+            } else {
+                const userData = userDoc.data();
+                currentUser = { uid: user.uid, ...userData };
+                portfolio = {
+                    balance: userData.funbucks || 500,
+                    bets: userData.bets || [],
+                    history: userData.history || [{
+                        date: new Date().toISOString(),
+                        value: userData.funbucks || 500
+                    }]
+                };
+            }
+
+            const authContainer = document.getElementById('auth-container');
+            const appContainer = document.getElementById('app-container');
+            const usernameDisplay = document.getElementById('username-display');
+            
+            if (authContainer) authContainer.classList.add('hidden');
+            if (appContainer) appContainer.classList.remove('hidden');
+            if (usernameDisplay) usernameDisplay.textContent = currentUser.username;
+            
+            if (currentUser && portfolio) {
                 await getMarkets();
                 await updatePortfolioDisplays();
                 await updateMarkets();
-            }else {
+            }
+        } else {
             currentUser = null;
             markets = [];
             portfolio = {
@@ -441,14 +461,11 @@ auth.onAuthStateChanged(async (user) => {
                 history: [{ date: new Date().toISOString(), value: 500 }]
             };
             
-            document.getElementById('auth-container').classList.remove('hidden');
-            document.getElementById('app-container').classList.add('hidden');
-            
-            // Add null check here
-            const authForm = document.getElementById('auth-form');
-            if (authForm) authForm.reset();
+            const authContainer = document.getElementById('auth-container');
+            const appContainer = document.getElementById('app-container');
+            if (authContainer) authContainer.classList.remove('hidden');
+            if (appContainer) appContainer.classList.add('hidden');
         }
-        } 
     } catch (error) {
         console.error('Auth state change error:', error);
         showErrorMessage('Please refresh the page and try again');
