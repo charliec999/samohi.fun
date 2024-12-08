@@ -844,62 +844,56 @@ function showAdminPanel() {
     const modal = document.createElement('div');
     modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50';
     modal.innerHTML = `
-        <div class="bg-gray-900 rounded-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden mx-4">
-            <div class="p-6 border-b border-gray-800">
+        <div class="bg-gray-900 rounded-2xl max-w-6xl w-full h-[90vh] mx-4 flex flex-col overflow-hidden">
+            <div class="p-6 border-b border-gray-800 flex-shrink-0">
                 <div class="flex items-center justify-between">
                     <h2 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Admin Dashboard</h2>
-                    <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-white transition-colors">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                        </svg>
-                    </button>
+                    <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-white transition-colors">×</button>
                 </div>
             </div>
             
-            <div class="grid grid-cols-6 gap-6 p-6">
-                <!-- Quick Actions Sidebar -->
-                <div class="col-span-2 space-y-4">
-                    <div class="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
-                        <h3 class="text-lg font-semibold text-blue-400 mb-4">Quick Actions</h3>
-                        <button onclick="showNewMarketForm()" 
-                                class="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white p-3 rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all mb-3">
-                            Create New Market
-                        </button>
-                        <button onclick="showMarketStats()" 
-                                class="w-full bg-gray-700 text-white p-3 rounded-lg hover:bg-gray-600 transition-all">
-                            View Market Stats
-                        </button>
-                    </div>
-
-                    <div class="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
-                        <h3 class="text-lg font-semibold text-blue-400 mb-4">Pending Resolutions</h3>
-                        <div id="pending-resolutions" class="space-y-3">
-                            <!-- Pending resolutions will be loaded here -->
+            <div class="flex-1 overflow-hidden p-6">
+                <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full">
+                    <!-- Sidebar -->
+                    <div class="lg:col-span-1 space-y-4">
+                        <div class="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
+                            <h3 class="text-lg font-semibold text-blue-400 mb-4">Quick Actions</h3>
+                            <button onclick="showNewMarketForm()" 
+                                    class="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white p-3 rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all mb-3">
+                                Create New Market
+                            </button>
+                            <button onclick="showMarketStats()" 
+                                    class="w-full bg-gray-700 text-white p-3 rounded-lg hover:bg-gray-600 transition-all">
+                                View Market Stats
+                            </button>
                         </div>
                     </div>
-                </div>
 
-                <!-- Main Content -->
-                <div class="col-span-4 space-y-4">
-                    <div class="flex items-center gap-4 mb-4">
-                        <input type="text" 
-                               id="admin-market-search" 
-                               placeholder="Search markets..." 
-                               class="w-full p-3 rounded-lg bg-gray-800/50 border border-gray-700 focus:border-blue-500">
-                        <select id="admin-market-filter" 
-                                class="p-3 rounded-lg bg-gray-800/50 border border-gray-700 focus:border-blue-500">
-                            <option value="all">All Categories</option>
-                            <option value="ASB">ASB</option>
-                            <option value="Sports">Sports</option>
-                            <option value="Clubs">Clubs</option>
-                            <option value="Teacher">Teacher</option>
-                            <option value="Around Campus">Around Campus</option>
-                            <option value="Daily">Daily</option>
-                        </select>
-                    </div>
+                    <!-- Main Content Area -->
+                    <div class="lg:col-span-3 flex flex-col h-full overflow-hidden">
+                        <div class="flex items-center gap-4 mb-4">
+                            <input type="text" 
+                                   id="admin-market-search" 
+                                   placeholder="Search markets..." 
+                                   class="w-full p-3 rounded-lg bg-gray-800/50 border border-gray-700 focus:border-blue-500">
+                            <select id="admin-market-filter" 
+                                    class="p-3 rounded-lg bg-gray-800/50 border border-gray-700 focus:border-blue-500">
+                                <option value="all">All Categories</option>
+                                <option value="ASB">ASB</option>
+                                <option value="Sports">Sports</option>
+                                <option value="Clubs">Clubs</option>
+                                <option value="Teacher">Teacher</option>
+                                <option value="Around Campus">Around Campus</option>
+                                <option value="Daily">Daily</option>
+                            </select>
+                        </div>
 
-                    <div id="admin-markets-list" class="space-y-4">
-                        <!-- Markets will be listed here -->
+                        <!-- Scrollable market list -->
+                        <div class="flex-1 overflow-y-auto">
+                            <div id="admin-markets-list" class="space-y-4">
+                                <!-- Markets will be loaded here -->
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -908,6 +902,59 @@ function showAdminPanel() {
 
     document.body.appendChild(modal);
     loadAdminMarkets();
+
+    // Add search functionality
+    const searchInput = document.getElementById('admin-market-search');
+    const filterSelect = document.getElementById('admin-market-filter');
+    
+    if (searchInput && filterSelect) {
+        searchInput.addEventListener('input', () => filterAdminMarkets(searchInput.value, filterSelect.value));
+        filterSelect.addEventListener('change', () => filterAdminMarkets(searchInput.value, filterSelect.value));
+    }
+}
+
+async function filterAdminMarkets(search = '', category = 'all') {
+    const marketsList = document.getElementById('admin-markets-list');
+    if (!marketsList) return;
+
+    const searchLower = search.toLowerCase();
+    const snapshot = await db.collection('markets').get();
+    const filteredMarkets = snapshot.docs.filter(doc => {
+        const market = doc.data();
+        const matchesSearch = search === '' || 
+            market.title.toLowerCase().includes(searchLower) || 
+            market.description.toLowerCase().includes(searchLower);
+        const matchesCategory = category === 'all' || market.category === category;
+        return matchesSearch && matchesCategory;
+    });
+
+    marketsList.innerHTML = filteredMarkets.map(doc => {
+        const market = { id: doc.id, ...doc.data() };
+        return `
+            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                <div class="flex justify-between items-center">
+                    <div class="flex-grow">
+                        <div class="font-medium text-blue-300">${market.title}</div>
+                        <div class="text-sm text-gray-400">${market.category}</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="showPriceUpdateModal(${JSON.stringify(market).replace(/"/g, '&quot;')})" 
+                                class="bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700">
+                            Update Price
+                        </button>
+                        <button onclick="showResolutionModal(${JSON.stringify(market).replace(/"/g, '&quot;')})" 
+                                class="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700">
+                            Resolve
+                        </button>
+                        <button onclick="deleteMarket('${market.id}')" 
+                                class="bg-red-600 text-white px-3 py-1 rounded">
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
 }
 
 function showPriceUpdateModal(market) {
@@ -3567,19 +3614,27 @@ async function recoverUserData() {
     
     try {
         const userDoc = await db.collection('users').doc(auth.currentUser.uid).get();
+        // if (userDoc.exists) {
+        //     const userData = userDoc.data();
+        //     portfolio = {
+        //         balance: userData.funbucks || 500,
+        //         bets: userData.bets || [],
+        //         history: userData.history || []
+        //     };
+        //     currentUser = {
+        //         uid: auth.currentUser.uid,
+        //         ...userData
+        //     };
+        //     await updatePortfolioDisplays();
+        //     await updateMarkets();
+        // }
         if (userDoc.exists) {
             const userData = userDoc.data();
-            portfolio = {
-                balance: userData.funbucks || 500,
-                bets: userData.bets || [],
-                history: userData.history || []
-            };
-            currentUser = {
-                uid: auth.currentUser.uid,
-                ...userData
-            };
-            await updatePortfolioDisplays();
-            await updateMarkets();
+            const adminButton = document.getElementById('admin-panel-btn');
+            if (adminButton && userData.isAdmin === true) {
+                adminButton.classList.remove('hidden');
+                adminButton.onclick = showAdminPanel;
+            }
         }
     } catch (error) {
         console.error('Error recovering user data:', error);
