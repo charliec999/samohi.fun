@@ -10,27 +10,17 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.8.0/firebase-firestore-compat.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
     <script>
-        const script = document.createElement('script');
-        script.innerHTML = `
-            Chart.register(
-                Chart.controllers.line,
-                Chart.scales.linear,
-                Chart.scales.category,
-                Chart.elements.line,
-                Chart.elements.point,
-                Chart.elements.arc,
-                Chart.defaults,
-                Chart.layouts,
-                Chart.Animation,
-                Chart.Animations,
-                Chart.Decimation,
-                Chart.Filler,
-                Chart.Legend,
-                Chart.Title,
-                Chart.Tooltip
-            );
-        `;
-        document.head.appendChild(script);
+        const registerables = [
+            'LineController',
+            'LineElement',
+            'PointElement',
+            'CategoryScale',
+            'LinearScale',
+            'Title',
+            'Tooltip',
+            'Legend'
+        ];
+        Chart.register(...registerables);
     </script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
@@ -168,18 +158,14 @@
     <div id="auth-container" class="min-h-screen flex items-center justify-center animate__animated animate__fadeIn">
         <div class="modal-content p-8 rounded-lg shadow-lg w-96 animate__animated animate__zoomIn">
             <h1 class="text-4xl font-bold text-center mb-6 text-blue-300">samohi.fun</h1>
-            <form id="auth-form" class="space-y-4">
-                <input type="email" id="email" placeholder="Email" required class="w-full p-2 rounded">
-                <input type="password" id="password" placeholder="Password" required class="w-full p-2 rounded">
-                <input type="text" id="username" placeholder="Username (Sign up only)" class="w-full p-2 rounded hidden">
+            <div class="space-y-4">
+                <button id="google-signin" class="w-full bg-white hover:bg-gray-100 text-gray-800 py-3 px-4 rounded-lg flex items-center justify-center gap-3 transition-colors">
+                    <img src="https://www.google.com/favicon.ico" class="w-5 h-5" alt="Google">
+                    Sign in with Google
+                </button>
+                <p class="text-sm text-gray-400 text-center">Only @smmusd.org accounts are allowed</p>
                 <div id="error-message" class="text-red-400 hidden"></div>
-                <button type="submit" class="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700">
-                    <span id="auth-button-text">Login</span>
-                </button>
-                <button type="button" id="toggle-auth" class="w-full text-sm text-gray-400 hover:text-blue-300">
-                    Don't have an account? Sign up
-                </button>
-            </form>
+            </div>
         </div>
     </div>
 
@@ -201,7 +187,7 @@
 
         <nav class="max-w-7xl mx-auto px-4 py-6">
             <div class="flex flex-col items-center gap-6">
-                <h1 class="text-3xl font-bold text-blue-300">Markets</h1>
+                <h1 class="text-3xl font-bold text-blue-300">Markets (Suggest Bet: https://forms.gle/e9jarWstAkfg2j6n6)</h1>
                 
                 <div class="flex items-center gap-4 w-full max-w-3xl">
                     <button class="tab-button px-6 py-2 rounded-full" data-tab="home">
@@ -356,12 +342,51 @@ const firebaseConfig = {
     measurementId: "G-RLPKRSNF6Q"
 };
 
-
 const DEFAULT_PROFILE_PIC = "https://polymarket.com/_next/image?url=https%3A%2F%2Fpolymarket-upload.s3.us-east-2.amazonaws.com%2F31669764_829bfb7d-c27d-4c9a-8b78-dd9135282938_1730892972459.png&w=256&q=100";
 const app = firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 const storage = firebase.storage && firebase.storage();
+
+const provider = new firebase.auth.GoogleAuthProvider();
+provider.setCustomParameters({
+    'hd': 'smmusd.org',
+    'prompt': 'select_account'
+});
+
+document.getElementById('google-signin').addEventListener('click', async () => {
+    try {
+        // Enable persistence first
+        await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+        const result = await auth.signInWithPopup(provider);
+        
+        if (!result.user.email.endsWith('@smmusd.org')) {
+            await auth.signOut();
+            showErrorMessage('Please use your SMMUSD account');
+            return;
+        }
+
+        const userRef = db.collection('users').doc(result.user.uid);
+        const doc = await userRef.get();
+
+        if (!doc.exists) {
+            await userRef.set({
+                username: result.user.displayName,
+                email: result.user.email,
+                funbucks: 500,
+                bets: [],
+                history: [{
+                    date: new Date().toISOString(),
+                    value: 500
+                }],
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        }
+    } catch (error) {
+        console.error('Auth error:', error);
+        showErrorMessage('Please enable popups for this site');
+    }
+});
 
 const isAdmin = async (userId) => {
     if (!userId) return false;
@@ -376,6 +401,7 @@ const isAdmin = async (userId) => {
 };
 auth.onAuthStateChanged(async (user) => {
     try {
+        chartManager.destroyAll();
         if (user) {
             const userDoc = await db.collection('users').doc(user.uid).get();
             
@@ -406,12 +432,26 @@ auth.onAuthStateChanged(async (user) => {
                 await getMarkets();
                 await updatePortfolioDisplays();
                 await updateMarkets();
-            }
+            }else {
+            currentUser = null;
+            markets = [];
+            portfolio = {
+                balance: 500,
+                bets: [],
+                history: [{ date: new Date().toISOString(), value: 500 }]
+            };
+            
+            document.getElementById('auth-container').classList.remove('hidden');
+            document.getElementById('app-container').classList.add('hidden');
+            
+            // Add null check here
+            const authForm = document.getElementById('auth-form');
+            if (authForm) authForm.reset();
         }
-        // ... rest of your auth state change handler
+        } 
     } catch (error) {
         console.error('Auth state change error:', error);
-        showErrorMessage('Error with authentication. Please try again.');
+        showErrorMessage('Please refresh the page and try again');
     }
 });
 
@@ -774,6 +814,9 @@ function updateMarketStats() {
     // Add stats updating logic here
     // Example: Create charts using Chart.js for category distribution and volume
 }
+
+
+
 
 function showAdminPanel() {
     if (!currentUser?.isAdmin) {
@@ -3174,82 +3217,8 @@ async function showUserProfile(userId) {
 }
 
 
-document.getElementById('toggle-auth').addEventListener('click', () => {
-    isLoginMode = !isLoginMode;
-    
-    // Show/hide username field
-    const usernameField = document.getElementById('username');
-    usernameField.classList.toggle('hidden');
-    
-    // Update button text
-    document.getElementById('auth-button-text').textContent = isLoginMode ? 'Login' : 'Sign Up';
-    document.getElementById('toggle-auth').textContent = isLoginMode ? 
-        "Don't have an account? Sign up" : 
-        "Already have an account? Login";
-        
-    // Clear any error messages
-    const errorMessage = document.getElementById('error-message');
-    errorMessage.classList.add('hidden');
-    errorMessage.textContent = '';
-});
 
-// Update auth event handler
-document.getElementById('auth-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-    const username = document.getElementById('username').value;
-    const errorMessage = document.getElementById('error-message');
 
-    try {
-        if (isLoginMode) {
-            // Simple login with email/password
-            await auth.signInWithEmailAndPassword(email, password);
-        } else {
-            // For signup, check if username exists first
-            const existingUsers = await db.collection('users')
-                .where('username', '==', username)
-                .get();
-
-            if (!existingUsers.empty) {
-                throw new Error('Username already taken');
-            }
-
-            // Create the user
-            const userCredential = await auth.createUserWithEmailAndPassword(email, password);
-
-            // Create the user document
-            await db.collection('users').doc(userCredential.user.uid).set({
-                username: username,
-                email: email,
-                funbucks: 500,
-                bets: [],
-                history: [{
-                    date: new Date().toISOString(),
-                    value: 500
-                }],
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-
-            // Set current user
-            currentUser = {
-                uid: userCredential.user.uid,
-                username: username,
-                email: email
-            };
-        }
-
-        // Clear error and form
-        errorMessage.classList.add('hidden');
-        e.target.reset();
-
-    } catch (error) {
-        console.error('Auth error:', error);
-        errorMessage.textContent = error.message;
-        errorMessage.classList.remove('hidden');
-    }
-});
 
 document.getElementById('logout-button').addEventListener('click', async () => {
     try {
@@ -3488,7 +3457,6 @@ async function recoverUserData() {
     }
 }
 
-// Call this function when page loads
 window.addEventListener('load', () => {
     if (auth.currentUser) {
         recoverUserData();
