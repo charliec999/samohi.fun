@@ -1918,7 +1918,7 @@ function showBettingModal(market, position) {
     if (!modal) return;
 
     const price = position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
-    modal.style.zIndex = '10000';
+    
     modal.classList.remove('hidden');
     
     document.getElementById('modal-market-info').innerHTML = `
@@ -1952,10 +1952,52 @@ function showBettingModal(market, position) {
     const confirmBtn = document.getElementById('confirm-bet');
     const cancelBtn = document.getElementById('cancel-bet');
     
-    confirmBtn.onclick = () => placeBet(market.id, position);
-    cancelBtn.onclick = () => modal.classList.add('hidden');
+    if (confirmBtn) {
+        confirmBtn.onclick = () => placeBet(market.id, position);
+    }
+    
+    if (cancelBtn) {
+        cancelBtn.onclick = () => modal.classList.add('hidden');
+    }
 }
 
+document.querySelectorAll('[data-tab]').forEach(button => {
+    button.addEventListener('click', async () => {
+        const tabName = button.getAttribute('data-tab');
+        
+        // Remove selected class from all buttons
+        document.querySelectorAll('[data-tab]').forEach(btn => 
+            btn.classList.remove('selected'));
+        
+        // Add selected class to clicked button
+        button.classList.add('selected');
+        
+        // Hide all tab content
+        document.querySelectorAll('.tab-content').forEach(content => 
+            content.classList.add('hidden'));
+        
+        // Show selected tab content
+        const tabContent = document.getElementById(`${tabName}-tab`);
+        if (tabContent) {
+            tabContent.classList.remove('hidden');
+            
+            // Update content based on tab
+            switch(tabName) {
+                case 'portfolio':
+                    await updatePortfolioDisplays();
+                    break;
+                case 'leaderboard':
+                    await updateLeaderboard();
+                    break;
+                case 'profile':
+                    await loadProfileData();
+                    break;
+                default:
+                    await updateMarkets();
+            }
+        }
+    });
+});
 async function placeBet(marketId, position) {
     try {
         if (!auth.currentUser) {
@@ -1967,18 +2009,57 @@ async function placeBet(marketId, position) {
         if (!market) throw new Error('Market not found');
 
         const amount = parseFloat(document.getElementById('bet-amount').value);
-        if (amount <= 0 || amount > portfolio.balance) {
-            showErrorMessage('Invalid bet amount');
+        const price = position === 'yes' 
+            ? Math.max(0.001, Math.min(0.999, market.currentPrice))
+            : Math.max(0.001, Math.min(0.999, 1 - market.currentPrice));
+
+        const shares = price > 0 ? amount / price : 0;
+
+        if (!isFinite(shares) || shares <= 0) {
+            showErrorMessage('Invalid share calculation');
             return;
         }
 
-        // Rest of your existing placeBet function...
-        
-        // After updating the user data
-        await updatePortfolioDisplays();
+        if (amount > portfolio.balance) {
+            showErrorMessage('Insufficient FunBucks');
+            return;
+        }
+
+        const bet = {
+            marketId,
+            position,
+            amount,
+            shares,
+            entryPrice: price,
+            date: new Date().toISOString(),
+            marketTitle: market.title,
+            marketImage: market.image
+        };
+
+        // Update Firestore first
+        const userRef = db.collection('users').doc(auth.currentUser.uid);
+        await userRef.update({
+            funbucks: firebase.firestore.FieldValue.increment(-amount),
+            bets: firebase.firestore.FieldValue.arrayUnion(bet),
+            history: firebase.firestore.FieldValue.arrayUnion({
+                date: new Date().toISOString(),
+                value: portfolio.balance - amount
+            })
+        });
+
+        // Then update local state
+        portfolio.balance -= amount;
+        portfolio.bets.push(bet);
+        portfolio.history.push({
+            date: new Date().toISOString(),
+            value: portfolio.balance
+        });
+
         document.getElementById('betting-modal').classList.add('hidden');
         showSuccessMessage('Bet placed successfully!');
-        
+        await updatePortfolioDisplays();
+        await updateMarkets();
+
     } catch (error) {
         console.error('Error placing bet:', error);
         showErrorMessage(error.message || 'Failed to place bet');
@@ -2731,23 +2812,40 @@ async function updateMarkets(force = false) {
         this.updating = false;
     }
 }
+
 function addMarketEventListeners(card, market) {
     const yesButton = card.querySelector('.bet-yes');
     const noButton = card.querySelector('.bet-no');
     const discussButton = card.querySelector('.view-discussion');
 
-    yesButton.onclick = () => {
-        if (checkAuth()) showBettingModal(market, 'yes');
-    };
+    if (yesButton) {
+        yesButton.onclick = (e) => {
+            e.preventDefault();
+            if (checkAuth()) {
+                showBettingModal(market, 'yes');
+            }
+        };
+    }
     
-    noButton.onclick = () => {
-        if (checkAuth()) showBettingModal(market, 'no');
-    };
+    if (noButton) {
+        noButton.onclick = (e) => {
+            e.preventDefault();
+            if (checkAuth()) {
+                showBettingModal(market, 'no');
+            }
+        };
+    }
     
-    discussButton.onclick = () => {
-        if (checkAuth()) showMarketDiscussion(market.id);
-    };
+    if (discussButton) {
+        discussButton.onclick = (e) => {
+            e.preventDefault();
+            if (checkAuth()) {
+                showMarketDiscussion(market.id);
+            }
+        };
+    }
 }
+
 function checkAuth() {
     if (!auth.currentUser) {
         showErrorMessage('Please sign in to continue');
