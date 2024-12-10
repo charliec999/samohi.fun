@@ -556,9 +556,9 @@ auth.onAuthStateChanged(async (user) => {
             console.log('Fetched user data:', userDoc.data());
             
             if (!userDoc.exists) {
-                // Only for brand new users
+                // For new users, use Google display name
                 const initialData = {
-                    username: user.displayName || user.email.split('@')[0],
+                    username: user.displayName, // Use Google display name
                     email: user.email,
                     funbucks: 500,
                     bets: [],
@@ -567,7 +567,7 @@ auth.onAuthStateChanged(async (user) => {
                         value: 500
                     }],
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    isAdmin: false // Explicitly set admin status for new users
+                    isAdmin: false
                 };
                 
                 console.log('Creating new user with data:', initialData);
@@ -583,12 +583,12 @@ auth.onAuthStateChanged(async (user) => {
                 const userData = userDoc.data();
                 console.log('Using existing user data:', userData);
                 
-                // Never reset the balance and preserve admin status
                 currentUser = { 
                     uid: user.uid, 
                     ...userData,
+                    username: user.displayName, // Always use current Google display name
                     funbucks: userData.funbucks,
-                    isAdmin: userData.isAdmin === true // Explicitly check admin status
+                    isAdmin: userData.isAdmin === true
                 };
                 
                 portfolio = {
@@ -596,6 +596,13 @@ auth.onAuthStateChanged(async (user) => {
                     bets: userData.bets || [],
                     history: userData.history || []
                 };
+
+                // Update stored username if it changed
+                if (userData.username !== user.displayName) {
+                    await db.collection('users').doc(user.uid).update({
+                        username: user.displayName
+                    });
+                }
             }
             
             console.log('Final state:', { currentUser, portfolio });
@@ -604,9 +611,8 @@ auth.onAuthStateChanged(async (user) => {
             document.getElementById('auth-container').classList.add('hidden');
             document.getElementById('app-container').classList.remove('hidden');
             document.getElementById('username-display').textContent = currentUser.username;
-            document.getElementById('balance-display').textContent = `Balance: ${portfolio.balance} FunBucks`;
             
-            // Show/hide admin button based on admin status
+            // Show/hide admin button
             const adminButton = document.getElementById('admin-panel-btn');
             if (adminButton) {
                 if (currentUser.isAdmin === true) {
@@ -624,7 +630,6 @@ auth.onAuthStateChanged(async (user) => {
         } else {
             console.log('User signed out');
             
-            // Reset state on logout
             currentUser = null;
             markets = [];
             portfolio = {
@@ -3875,13 +3880,58 @@ document.querySelectorAll('.tab-button').forEach(button => {
     });
 });
 
-async function loadProfileData() {
-    const usernameInput = document.getElementById('profile-username');
-    if (usernameInput && currentUser) {
-        usernameInput.value = currentUser.username;
-    }
-}
+function loadProfileData() {
+    const profileTab = document.getElementById('profile-tab');
+    if (!profileTab) return;
 
+    profileTab.innerHTML = `
+        <div class="market-card p-6 rounded-lg">
+            <div class="flex items-center justify-between mb-8">
+                <h2 class="text-2xl font-bold text-blue-300">Profile</h2>
+                ${currentUser?.isAdmin ? `
+                    <button id="admin-panel-btn" class="bg-purple-600 text-white px-4 py-2 rounded-lg">
+                        Admin Panel
+                    </button>
+                ` : ''}
+            </div>
+
+            <div class="grid md:grid-cols-2 gap-8">
+                <div class="space-y-6">
+                    <h3 class="text-xl font-semibold text-blue-300 mb-4">Account Info</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-gray-400 mb-2">Name</label>
+                            <div class="w-full p-3 rounded-lg bg-gray-800/50 border border-gray-700 text-white">
+                                ${currentUser?.username}
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-2">Email</label>
+                            <div class="w-full p-3 rounded-lg bg-gray-800/50 border border-gray-700 text-white">
+                                ${currentUser?.email}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="text-xl font-semibold text-blue-300 mb-4">Transaction History</h3>
+                    <div id="transaction-history" class="space-y-3 max-h-96 overflow-y-auto">
+                        <!-- Transactions will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Reattach admin panel button handler if needed
+    if (currentUser?.isAdmin) {
+        document.getElementById('admin-panel-btn')?.addEventListener('click', showAdminPanel);
+    }
+
+    // Load transaction history if you have that functionality
+    updateTransactionHistory();
+}
 
 async function loadUserData(userId) {
     try {
