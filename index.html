@@ -441,6 +441,13 @@ provider.setCustomParameters({
 
 document.getElementById('google-signin')?.addEventListener('click', async () => {
     try {
+        const referralCode = document.getElementById('referral-code').value.trim();
+        
+        // Store referral code for use after authentication
+        if (referralCode) {
+            localStorage.setItem('pendingReferralCode', referralCode);
+        }
+
         const result = await auth.signInWithPopup(provider);
         
         if (!result.user.email.endsWith('@smmk12.org')) {
@@ -449,12 +456,33 @@ document.getElementById('google-signin')?.addEventListener('click', async () => 
             return;
         }
 
+        // Check if user exists
         const userRef = db.collection('users').doc(result.user.uid);
         const userDoc = await userRef.get();
 
         if (!userDoc.exists) {
+            // New user - validate referral code
+            if (!referralCode) {
+                await auth.signOut();
+                showErrorMessage('Referral code is required for new users');
+                return;
+            }
+
+            // Verify referral code exists
+            const referralQuery = await db.collection('users')
+                .where('referralCode', '==', referralCode)
+                .limit(1)
+                .get();
+
+            if (referralQuery.empty) {
+                await auth.signOut();
+                showErrorMessage('Invalid referral code');
+                return;
+            }
+
+            // Create new user with referral
             await userRef.set({
-                username: result.user.displayName || result.user.email.split('@')[0],
+                username: result.user.displayName,
                 email: result.user.email,
                 funbucks: 500,
                 bets: [],
@@ -462,9 +490,20 @@ document.getElementById('google-signin')?.addEventListener('click', async () => 
                     date: new Date().toISOString(),
                     value: 500
                 }],
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                isAdmin: false,
+                referralCode: generateReferralCode(),
+                referredBy: referralCode,
+                profilePicture: result.user.photoURL || 'https://polymarket.com/_next/image?url=https%3A%2F%2Fpolymarket-upload.s3.us-east-2.amazonaws.com%2F31669764_829bfb7d-c27d-4c9a-8b78-dd9135282938_1730892972459.png&w=256&q=100'
             });
+
+            // Process referral reward
+            await processReferralReward(referralCode);
         }
+
+        // Clear stored referral code
+        localStorage.removeItem('pendingReferralCode');
+        
     } catch (error) {
         console.error('Auth error:', error);
         if (error.code === 'auth/popup-blocked') {
@@ -690,6 +729,12 @@ auth.onAuthStateChanged(async (user) => {
                 const element = document.getElementById(id);
                 if (element) element.textContent = '';
             });
+            await updatePortfolioDisplays();
+            await getMarkets();
+            await updateMarkets();
+            
+            // Update displays again after getting markets
+            await updatePortfolioDisplays();
         }
     } catch (error) {
         console.error('Auth state change error:', error);
@@ -707,34 +752,37 @@ function generateReferralCode() {
     }
     return code;
 }
+
 async function processReferralReward(referralCode) {
     try {
-        // Find user with this referral code
+        // Find referrer
         const referrerSnapshot = await db.collection('users')
             .where('referralCode', '==', referralCode)
             .limit(1)
             .get();
-        
+
         if (!referrerSnapshot.empty) {
             const referrerDoc = referrerSnapshot.docs[0];
             const referrerData = referrerDoc.data();
-            
-            // Add reward and record the referral
+
+            // Add reward and record it
             await referrerDoc.ref.update({
                 funbucks: firebase.firestore.FieldValue.increment(50),
                 history: firebase.firestore.FieldValue.arrayUnion({
                     date: new Date().toISOString(),
-                    value: referrerData.funbucks + 50,
-                    type: 'referral_reward'
+                    value: (referrerData.funbucks || 0) + 50,
+                    type: 'referral_reward',
+                    description: 'Referral bonus'
                 })
             });
-            
-            showSuccessMessage('Referral reward processed successfully!');
+
+            showSuccessMessage('Successfully signed up with referral!');
         }
     } catch (error) {
         console.error('Error processing referral:', error);
     }
 }
+
 
 function updateReferralDisplay(referralCode) {
     if (!referralCode) {
@@ -1848,11 +1896,12 @@ function showSuccessMessage(message) {
 }
 
 function showErrorMessage(message) {
-    const toast = document.createElement('div');
-    toast.className = 'fixed bottom-4 right-4 bg-red-500 text-white px-6 py-3 rounded-lg shadow-lg animate__animated animate__fadeInUp';
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 3000);
+    const errorDiv = document.getElementById('error-message');
+    if (errorDiv) {
+        errorDiv.textContent = message;
+        errorDiv.classList.remove('hidden');
+        setTimeout(() => errorDiv.classList.add('hidden'), 5000);
+    }
 }
 
 async function loadAdminMarkets() {
@@ -2587,26 +2636,25 @@ document.querySelectorAll('[data-tab]').forEach(button => {
         if (tabContent) {
             tabContent.classList.remove('hidden');
 
-            // Show/hide market filters based on tab
-            const marketFilters = document.querySelector('.market-filters');
-            if (marketFilters) {
-                marketFilters.style.display = tabName === 'home' ? 'block' : 'none';
-            }
-            
-            // Update content based on tab
-            switch(tabName) {
-                case 'home':
-                    await updateMarkets();
-                    break;
-                case 'portfolio':
-                    await updatePortfolioDisplays();
-                    break;
-                case 'leaderboard':
-                    await updateLeaderboard();
-                    break;
-                case 'profile':
-                    await loadProfileData();
-                    break;
+            // Update displays based on tab
+            try {
+                // Always update portfolio displays first
+                await updatePortfolioDisplays();
+                
+                // Then do tab-specific updates
+                switch(tabName) {
+                    case 'home':
+                        await updateMarkets();
+                        break;
+                    case 'portfolio':
+                        await updatePortfolioChart();
+                        break;
+                    case 'leaderboard':
+                        await updateLeaderboard();
+                        break;
+                }
+            } catch (error) {
+                console.error('Error updating tab content:', error);
             }
         }
     });
@@ -2681,31 +2729,22 @@ async function placeBet(marketId, position) {
     }
 }
 
-function calculateNetworth(userData = null) {
-    // If no userData passed, use current portfolio
-    if (!userData) {
-        return portfolio.balance + portfolio.bets.reduce((total, bet) => {
-            const market = markets.find(m => m.id === bet.marketId);
-            if (!market) return total;
-            
-            const price = bet.position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
-            const currentValue = bet.shares * price;
-            return total + (isFinite(currentValue) ? currentValue : 0);
-        }, 0);
-    }
+function calculateNetworth() {
+    if (!portfolio || !markets) return 0;
 
-    // Calculate for specific user data
-    const betsValue = (userData.bets || []).reduce((total, bet) => {
+    const balance = portfolio.balance || 0;
+    const betsValue = portfolio.bets.reduce((total, bet) => {
         const market = markets.find(m => m.id === bet.marketId);
         if (!market) return total;
         
-        const price = bet.position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
-        const currentValue = bet.shares * price;
-        return total + (isFinite(currentValue) ? currentValue : 0);
+        const currentPrice = bet.position === 'yes' ? market.currentPrice : (1 - market.currentPrice);
+        const value = bet.shares * currentPrice;
+        return total + (isFinite(value) ? value : 0);
     }, 0);
-    
-    return (userData.funbucks || 0) + betsValue;
+
+    return balance + betsValue;
 }
+
 
 function createChart(ctx, market) {
     if (!ctx) return;
@@ -2817,29 +2856,40 @@ function updatePortfolioChart() {
     }
 }
 
-function updatePortfolioDisplays() {
+async function updatePortfolioDisplays() {
     if (!portfolio) return;
     
     const networth = calculateNetworth();
-    const betsValue = (portfolio.bets || []).reduce((total, bet) => {
+    const betsValue = portfolio.bets.reduce((total, bet) => {
         const { currentValue } = calculateBetValue(bet);
         return total + currentValue;
     }, 0);
 
-    const balanceDisplay = document.getElementById('balance-display');
-    const networthDisplay = document.getElementById('networth-display');
-    const portfolioNetworth = document.getElementById('portfolio-networth');
-    const portfolioBalance = document.getElementById('portfolio-balance');
-    const portfolioBetsValue = document.getElementById('portfolio-bets-value');
+    // Update all networth displays
+    const displays = {
+        'balance-display': `Balance: ${formatCurrency(portfolio.balance)}`,
+        'networth-display': `Networth: ${formatCurrency(networth)}`,
+        'portfolio-networth': formatCurrency(networth),
+        'portfolio-balance': formatCurrency(portfolio.balance),
+        'portfolio-bets-value': formatCurrency(betsValue)
+    };
 
-    if (balanceDisplay) balanceDisplay.textContent = `Balance: ${formatCurrency(portfolio.balance)}`;
-    if (networthDisplay) networthDisplay.textContent = `Networth: ${formatCurrency(networth)}`;
-    if (portfolioNetworth) portfolioNetworth.textContent = formatCurrency(networth);
-    if (portfolioBalance) portfolioBalance.textContent = formatCurrency(portfolio.balance);
-    if (portfolioBetsValue) portfolioBetsValue.textContent = formatCurrency(betsValue);
+    // Update each display if it exists
+    Object.entries(displays).forEach(([id, value]) => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.textContent = value;
+        }
+    });
 
-    updatePortfolioBets();
-    updatePortfolioChart();
+    // Update portfolio bets display
+    await updatePortfolioBets();
+    
+    // Update portfolio chart if we're on the portfolio tab
+    const portfolioTab = document.getElementById('portfolio-tab');
+    if (portfolioTab && !portfolioTab.classList.contains('hidden')) {
+        await updatePortfolioChart();
+    }
 }
 
 
@@ -3933,18 +3983,26 @@ document.getElementById('logout-button').addEventListener('click', async () => {
         console.error('Logout error:', error);
     }
 });
-document.getElementById('auth-container').querySelector('.modal-content form').innerHTML = `
-    <div class="space-y-4">
-        <input type="email" id="email" placeholder="Email" required class="w-full p-2 rounded">
-        <input type="password" id="password" placeholder="Password" required class="w-full p-2 rounded">
-        <input type="text" id="username" placeholder="Username" class="w-full p-2 rounded hidden">
-        <div id="error-message" class="text-red-400 hidden"></div>
-        <button type="submit" class="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700">
-            <span id="auth-button-text">Login</span>
-        </button>
-        <button type="button" id="toggle-auth" class="w-full text-sm text-gray-400 hover:text-blue-300">
-            Don't have an account? Sign up
-        </button>
+document.getElementById('auth-container').querySelector('.modal-content').innerHTML = `
+    <div class="p-8 rounded-lg shadow-lg w-96 animate__animated animate__zoomIn">
+        <h1 class="text-4xl font-bold text-center mb-6 text-blue-300">samohi.fun</h1>
+        <div id="initial-view">
+            <div class="space-y-4">
+                <div class="space-y-2">
+                    <label class="block text-sm text-gray-400">Have a referral code?</label>
+                    <input type="text" 
+                           id="referral-code" 
+                           class="w-full p-3 rounded-lg bg-gray-800/50 border border-gray-700 focus:border-blue-500"
+                           placeholder="Enter referral code">
+                </div>
+                <button id="google-signin" class="w-full bg-white hover:bg-gray-100 text-gray-800 py-3 px-4 rounded-lg flex items-center justify-center gap-3 transition-colors">
+                    <img src="https://www.google.com/favicon.ico" class="w-5 h-5" alt="Google">
+                    Sign in with Google
+                </button>
+                <p class="text-sm text-gray-400 text-center">Only @smmk12.org accounts are allowed</p>
+                <div id="error-message" class="text-red-400 hidden"></div>
+            </div>
+        </div>
     </div>
 `;
 const profileSection = `
