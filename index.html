@@ -3896,11 +3896,12 @@ function loadProfileData() {
             </div>
 
             <div class="grid md:grid-cols-2 gap-8">
+                <!-- Account Info Section -->
                 <div class="space-y-6">
                     <h3 class="text-xl font-semibold text-blue-300 mb-4">Account Info</h3>
                     <div class="space-y-4">
                         <div>
-                            <label class="block text-gray-400 mb-2">Name</label>
+                            <label class="block text-gray-400 mb-2">Name (from Google)</label>
                             <div class="w-full p-3 rounded-lg bg-gray-800/50 border border-gray-700 text-white">
                                 ${currentUser?.username}
                             </div>
@@ -3914,10 +3915,50 @@ function loadProfileData() {
                     </div>
                 </div>
 
-                <div>
-                    <h3 class="text-xl font-semibold text-blue-300 mb-4">Transaction History</h3>
-                    <div id="transaction-history" class="space-y-3 max-h-96 overflow-y-auto">
-                        <!-- Transactions will be populated here -->
+                <!-- Profile Picture Section -->
+                <div class="space-y-6">
+                    <h3 class="text-xl font-semibold text-blue-300 mb-4">Profile Picture</h3>
+                    <div class="flex flex-col items-center space-y-4">
+                        <img id="current-profile-pic" 
+                             src="${currentUser?.profilePicture || 'https://polymarket.com/_next/image?url=https%3A%2F%2Fpolymarket-upload.s3.us-east-2.amazonaws.com%2F31669764_829bfb7d-c27d-4c9a-8b78-dd9135282938_1730892972459.png&w=256&q=100'}" 
+                             class="w-32 h-32 rounded-full object-cover border-2 border-blue-500"
+                             alt="Profile picture">
+                        
+                        <div class="w-full max-w-md">
+                            <label for="profile-picture-upload" 
+                                   class="block w-full px-4 py-2 bg-blue-600 text-white text-center rounded-lg hover:bg-blue-700 cursor-pointer transition-colors">
+                                Choose New Picture
+                            </label>
+                            <input type="file" 
+                                   id="profile-picture-upload" 
+                                   accept="image/*"
+                                   class="hidden"
+                                   onchange="handleProfilePictureUpload(this)">
+                        </div>
+                        
+                        <div class="text-sm text-gray-400 text-center">
+                            Supported formats: JPG, PNG, GIF (max 5MB)
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Referral Section -->
+            <div class="mt-8">
+                <h3 class="text-xl font-semibold text-blue-300 mb-4">Referral Program</h3>
+                <div class="bg-gray-800/50 p-4 rounded-lg">
+                    <div class="mb-4">
+                        <div class="text-gray-400 mb-2">Your Referral Code:</div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-lg font-mono text-blue-300">${currentUser.referralCode}</span>
+                            <button onclick="copyReferralLink('${window.location.origin}?ref=${currentUser.referralCode}')"
+                                    class="text-blue-400 hover:text-blue-300 transition-colors">
+                                Copy Link
+                            </button>
+                        </div>
+                    </div>
+                    <div class="text-sm text-gray-400">
+                        Share your referral code with friends! You'll receive 50 FunBucks for each new user who signs up using your code.
                     </div>
                 </div>
             </div>
@@ -3928,11 +3969,90 @@ function loadProfileData() {
     if (currentUser?.isAdmin) {
         document.getElementById('admin-panel-btn')?.addEventListener('click', showAdminPanel);
     }
+}
+async function handleProfilePictureUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
 
-    // Load transaction history if you have that functionality
-    updateTransactionHistory();
+    // Check file size (5MB limit)
+    if (file.size > 5 * 1024 * 1024) {
+        showErrorMessage('File size must be less than 5MB');
+        return;
+    }
+
+    // Check file type
+    if (!file.type.startsWith('image/')) {
+        showErrorMessage('Please upload an image file');
+        return;
+    }
+
+    try {
+        // Convert to base64 for storage
+        const base64 = await convertFileToBase64(file);
+        
+        // Update user profile
+        await db.collection('users').doc(auth.currentUser.uid).update({
+            profilePicture: base64
+        });
+
+        // Update displayed image
+        document.getElementById('current-profile-pic').src = base64;
+        showSuccessMessage('Profile picture updated successfully');
+        
+        // Update currentUser object
+        currentUser.profilePicture = base64;
+    } catch (error) {
+        console.error('Error updating profile picture:', error);
+        showErrorMessage('Failed to update profile picture');
+    }
+}
+function convertFileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = error => reject(error);
+        reader.readAsDataURL(file);
+    });
 }
 
+// Optional: Add image compression if needed
+async function compressImage(base64String) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.src = base64String;
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Set maximum dimensions
+            const MAX_WIDTH = 800;
+            const MAX_HEIGHT = 800;
+            
+            let width = img.width;
+            let height = img.height;
+            
+            // Calculate new dimensions
+            if (width > height) {
+                if (width > MAX_WIDTH) {
+                    height *= MAX_WIDTH / width;
+                    width = MAX_WIDTH;
+                }
+            } else {
+                if (height > MAX_HEIGHT) {
+                    width *= MAX_HEIGHT / height;
+                    height = MAX_HEIGHT;
+                }
+            }
+            
+            canvas.width = width;
+            canvas.height = height;
+            
+            // Draw and compress
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', 0.8));
+        };
+    });
+}
 async function loadUserData(userId) {
     try {
         const doc = await db.collection('users').doc(userId).get();
