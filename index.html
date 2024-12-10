@@ -551,14 +551,23 @@ auth.onAuthStateChanged(async (user) => {
     console.log('Previous state:', { currentUser, portfolio });
     
     try {
+        chartManager.destroyAll();
+        
         if (user) {
             const userDoc = await db.collection('users').doc(user.uid).get();
             console.log('Fetched user data:', userDoc.data());
             
+            // This is where the check goes!
             if (!userDoc.exists) {
-                // For new users, use Google display name
+                // Check for referral code in URL
+                const urlParams = new URLSearchParams(window.location.search);
+                const referralCode = urlParams.get('ref');
+                
+                // Generate unique referral code for new user
+                const newReferralCode = generateReferralCode();
+                
                 const initialData = {
-                    username: user.displayName, // Use Google display name
+                    username: user.displayName,
                     email: user.email,
                     funbucks: 500,
                     bets: [],
@@ -567,15 +576,22 @@ auth.onAuthStateChanged(async (user) => {
                         value: 500
                     }],
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    isAdmin: false
+                    isAdmin: false,
+                    referralCode: newReferralCode,
+                    referredBy: referralCode || null,
+                    profilePicture: user.photoURL || 'https://polymarket.com/_next/image?url=https%3A%2F%2Fpolymarket-upload.s3.us-east-2.amazonaws.com%2F31669764_829bfb7d-c27d-4c9a-8b78-dd9135282938_1730892972459.png&w=256&q=100'
                 };
                 
                 console.log('Creating new user with data:', initialData);
                 await db.collection('users').doc(user.uid).set(initialData);
                 
+                if (referralCode) {
+                    await processReferralReward(referralCode);
+                }
+                
                 currentUser = { uid: user.uid, ...initialData };
                 portfolio = {
-                    balance: 500,
+                    balance: initialData.funbucks,
                     bets: [],
                     history: initialData.history
                 };
@@ -583,12 +599,16 @@ auth.onAuthStateChanged(async (user) => {
                 const userData = userDoc.data();
                 console.log('Using existing user data:', userData);
                 
+                // Never reset the balance and preserve all user data
                 currentUser = { 
                     uid: user.uid, 
-                    ...userData,
                     username: user.displayName, // Always use current Google display name
+                    email: user.email,
                     funbucks: userData.funbucks,
-                    isAdmin: userData.isAdmin === true
+                    isAdmin: userData.isAdmin === true,
+                    referralCode: userData.referralCode,
+                    profilePicture: userData.profilePicture,
+                    referredBy: userData.referredBy
                 };
                 
                 portfolio = {
@@ -597,7 +617,7 @@ auth.onAuthStateChanged(async (user) => {
                     history: userData.history || []
                 };
 
-                // Update stored username if it changed
+                // Update stored username if Google display name changed
                 if (userData.username !== user.displayName) {
                     await db.collection('users').doc(user.uid).update({
                         username: user.displayName
@@ -607,12 +627,16 @@ auth.onAuthStateChanged(async (user) => {
             
             console.log('Final state:', { currentUser, portfolio });
             
-            // Update UI
+            // Update UI elements
             document.getElementById('auth-container').classList.add('hidden');
             document.getElementById('app-container').classList.remove('hidden');
             document.getElementById('username-display').textContent = currentUser.username;
+            document.getElementById('balance-display').textContent = `Balance: ${portfolio.balance} FunBucks`;
             
-            // Show/hide admin button
+            // Add referral code to header
+            updateReferralDisplay(currentUser.referralCode);
+            
+            // Show/hide admin button based on admin status
             const adminButton = document.getElementById('admin-panel-btn');
             if (adminButton) {
                 if (currentUser.isAdmin === true) {
@@ -623,13 +647,24 @@ auth.onAuthStateChanged(async (user) => {
                 }
             }
             
-            // Load market data
-            await getMarkets();
-            await updateMarkets();
-            await updatePortfolioDisplays();
+            // Update any profile pictures in the UI
+            const profilePics = document.querySelectorAll('.profile-picture');
+            profilePics.forEach(pic => {
+                pic.src = currentUser.profilePicture;
+            });
+            
+            // Load market data and update displays
+            await Promise.all([
+                getMarkets(),
+                updateMarkets(),
+                updatePortfolioDisplays()
+            ]);
+            
         } else {
+            // User is signed out
             console.log('User signed out');
             
+            // Reset state
             currentUser = null;
             markets = [];
             portfolio = {
@@ -638,8 +673,23 @@ auth.onAuthStateChanged(async (user) => {
                 history: []
             };
             
+            // Update UI for logged out state
             document.getElementById('auth-container').classList.remove('hidden');
             document.getElementById('app-container').classList.add('hidden');
+            
+            // Clear any sensitive data from UI
+            const sensitiveElements = [
+                'username-display',
+                'balance-display',
+                'portfolio-networth',
+                'portfolio-balance',
+                'portfolio-bets-value'
+            ];
+            
+            sensitiveElements.forEach(id => {
+                const element = document.getElementById(id);
+                if (element) element.textContent = '';
+            });
         }
     } catch (error) {
         console.error('Auth state change error:', error);
@@ -648,6 +698,87 @@ auth.onAuthStateChanged(async (user) => {
     
     console.log('==== AUTH STATE CHANGE END ====');
 });
+
+function generateReferralCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed similar looking characters
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+}
+async function processReferralReward(referralCode) {
+    try {
+        // Find user with this referral code
+        const referrerSnapshot = await db.collection('users')
+            .where('referralCode', '==', referralCode)
+            .limit(1)
+            .get();
+        
+        if (!referrerSnapshot.empty) {
+            const referrerDoc = referrerSnapshot.docs[0];
+            const referrerData = referrerDoc.data();
+            
+            // Add reward and record the referral
+            await referrerDoc.ref.update({
+                funbucks: firebase.firestore.FieldValue.increment(50),
+                history: firebase.firestore.FieldValue.arrayUnion({
+                    date: new Date().toISOString(),
+                    value: referrerData.funbucks + 50,
+                    type: 'referral_reward'
+                })
+            });
+            
+            showSuccessMessage('Referral reward processed successfully!');
+        }
+    } catch (error) {
+        console.error('Error processing referral:', error);
+    }
+}
+
+function updateReferralDisplay(referralCode) {
+    if (!referralCode) {
+        referralCode = generateAndSaveReferralCode();
+    }
+
+    const headerRight = document.querySelector('.header .flex.items-center.space-x-6');
+    if (!headerRight) return;
+    
+    // Create or update referral code display
+    let referralDisplay = document.getElementById('referral-code-display');
+    if (!referralDisplay) {
+        referralDisplay = document.createElement('div');
+        referralDisplay.id = 'referral-code-display';
+        referralDisplay.className = 'flex items-center gap-2';
+        headerRight.insertBefore(referralDisplay, headerRight.firstChild);
+    }
+    
+    const siteUrl = window.location.origin;
+    const referralUrl = `${siteUrl}?ref=${referralCode}`;
+    
+    referralDisplay.innerHTML = `
+        <div class="text-sm text-gray-400">Your Referral Code:</div>
+        <div class="bg-gray-800 px-3 py-1 rounded-lg flex items-center gap-2">
+            <span class="text-blue-300 font-mono">${referralCode}</span>
+            <button onclick="copyReferralLink('${referralUrl}')" 
+                    class="text-blue-400 hover:text-blue-300 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z"/>
+                    <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2H6zm0-2h8a4 4 0 014 4v11a4 4 0 01-4 4H6a4 4 0 01-4-4V5a4 4 0 014-4z"/>
+                </svg>
+            </button>
+        </div>
+    `;
+}
+async function copyReferralLink(referralUrl) {
+    try {
+        await navigator.clipboard.writeText(referralUrl);
+        showSuccessMessage('Referral link copied to clipboard!');
+    } catch (error) {
+        console.error('Error copying referral link:', error);
+        showErrorMessage('Error copying referral link');
+    }
+}
 
 function showMarkets(type) {
     document.querySelectorAll('.market-btn').forEach(btn => {
@@ -3884,6 +4015,8 @@ function loadProfileData() {
     const profileTab = document.getElementById('profile-tab');
     if (!profileTab) return;
 
+    const defaultPicture = 'https://polymarket.com/_next/image?url=https%3A%2F%2Fpolymarket-upload.s3.us-east-2.amazonaws.com%2F31669764_829bfb7d-c27d-4c9a-8b78-dd9135282938_1730892972459.png&w=256&q=100';
+
     profileTab.innerHTML = `
         <div class="market-card p-6 rounded-lg">
             <div class="flex items-center justify-between mb-8">
@@ -3903,13 +4036,13 @@ function loadProfileData() {
                         <div>
                             <label class="block text-gray-400 mb-2">Name (from Google)</label>
                             <div class="w-full p-3 rounded-lg bg-gray-800/50 border border-gray-700 text-white">
-                                ${currentUser?.username}
+                                ${currentUser?.username || ''}
                             </div>
                         </div>
                         <div>
                             <label class="block text-gray-400 mb-2">Email</label>
                             <div class="w-full p-3 rounded-lg bg-gray-800/50 border border-gray-700 text-white">
-                                ${currentUser?.email}
+                                ${currentUser?.email || ''}
                             </div>
                         </div>
                     </div>
@@ -3920,7 +4053,7 @@ function loadProfileData() {
                     <h3 class="text-xl font-semibold text-blue-300 mb-4">Profile Picture</h3>
                     <div class="flex flex-col items-center space-y-4">
                         <img id="current-profile-pic" 
-                             src="${currentUser?.profilePicture || 'https://polymarket.com/_next/image?url=https%3A%2F%2Fpolymarket-upload.s3.us-east-2.amazonaws.com%2F31669764_829bfb7d-c27d-4c9a-8b78-dd9135282938_1730892972459.png&w=256&q=100'}" 
+                             src="${currentUser?.profilePicture || defaultPicture}" 
                              class="w-32 h-32 rounded-full object-cover border-2 border-blue-500"
                              alt="Profile picture">
                         
@@ -3950,8 +4083,8 @@ function loadProfileData() {
                     <div class="mb-4">
                         <div class="text-gray-400 mb-2">Your Referral Code:</div>
                         <div class="flex items-center gap-2">
-                            <span class="text-lg font-mono text-blue-300">${currentUser.referralCode}</span>
-                            <button onclick="copyReferralLink('${window.location.origin}?ref=${currentUser.referralCode}')"
+                            <span class="text-lg font-mono text-blue-300">${currentUser?.referralCode || 'Loading...'}</span>
+                            <button onclick="copyReferralLink('${window.location.origin}?ref=${currentUser?.referralCode}')"
                                     class="text-blue-400 hover:text-blue-300 transition-colors">
                                 Copy Link
                             </button>
@@ -4006,6 +4139,22 @@ async function handleProfilePictureUpload(input) {
         showErrorMessage('Failed to update profile picture');
     }
 }
+async function generateAndSaveReferralCode() {
+    const newCode = generateReferralCode();
+    
+    try {
+        await db.collection('users').doc(auth.currentUser.uid).update({
+            referralCode: newCode
+        });
+        
+        currentUser.referralCode = newCode;
+        return newCode;
+    } catch (error) {
+        console.error('Error saving referral code:', error);
+        return 'ERROR';
+    }
+}
+
 function convertFileToBase64(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
