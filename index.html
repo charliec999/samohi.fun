@@ -224,6 +224,10 @@
         <div class="modal-content p-8 rounded-lg shadow-lg w-96 animate__animated animate__zoomIn">
             <h1 class="text-4xl font-bold text-center mb-6 text-blue-300">samohi.fun</h1>
             <div class="space-y-4">
+                <input type="text" 
+                       id="referral-code" 
+                       class="w-full p-3 rounded-lg bg-gray-800/50 border border-gray-700 focus:border-blue-500 text-white"
+                       placeholder="Referral code (optional)">
                 <button id="google-signin" class="w-full bg-white hover:bg-gray-100 text-gray-800 py-3 px-4 rounded-lg flex items-center justify-center gap-3 transition-colors">
                     <img src="https://www.google.com/favicon.ico" class="w-5 h-5" alt="Google">
                     Sign in with Google
@@ -441,6 +445,9 @@ provider.setCustomParameters({
 
 document.getElementById('google-signin')?.addEventListener('click', async () => {
     try {
+        const referralCode = document.getElementById('referral-code')?.value?.trim();
+        console.log('Referral code:', referralCode); // Debug log
+        
         const result = await auth.signInWithPopup(provider);
         
         if (!result.user.email.endsWith('@smmk12.org')) {
@@ -453,8 +460,40 @@ document.getElementById('google-signin')?.addEventListener('click', async () => 
         const userDoc = await userRef.get();
 
         if (!userDoc.exists) {
-            await userRef.set({
-                username: result.user.displayName || result.user.email.split('@')[0],
+            // New user
+            console.log('Creating new user with referral:', referralCode); // Debug log
+            
+            // Verify and process referral first if provided
+            if (referralCode) {
+                const referralQuery = await db.collection('users')
+                    .where('referralCode', '==', referralCode)
+                    .limit(1)
+                    .get();
+
+                if (!referralQuery.empty) {
+                    console.log('Valid referral code found'); // Debug log
+                    const referrerDoc = referralQuery.docs[0];
+                    const referrerData = referrerDoc.data();
+                    
+                    // Process referral reward
+                    await referrerDoc.ref.update({
+                        funbucks: firebase.firestore.FieldValue.increment(50),
+                        history: firebase.firestore.FieldValue.arrayUnion({
+                            date: new Date().toISOString(),
+                            value: (referrerData.funbucks || 0) + 50,
+                            type: 'referral_reward',
+                            description: `Referral reward for ${result.user.email}`
+                        })
+                    });
+                    console.log('Reward processed'); // Debug log
+                } else {
+                    console.log('Invalid referral code'); // Debug log
+                }
+            }
+
+            // Create new user after processing referral
+            const initialData = {
+                username: result.user.displayName,
                 email: result.user.email,
                 funbucks: 500,
                 bets: [],
@@ -462,18 +501,32 @@ document.getElementById('google-signin')?.addEventListener('click', async () => 
                     date: new Date().toISOString(),
                     value: 500
                 }],
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                isAdmin: false,
+                referralCode: generateReferralCode(),
+                referredBy: referralCode || null,
+                profilePicture: result.user.photoURL || 'https://polymarket.com/_next/image?url=https%3A%2F%2Fpolymarket-upload.s3.us-east-2.amazonaws.com%2F31669764_829bfb7d-c27d-4c9a-8b78-dd9135282938_1730892972459.png&w=256&q=100'
+            };
+
+            await userRef.set(initialData);
+            
+            if (referralCode) {
+                showSuccessMessage('Account created with referral code!');
+            }
         }
     } catch (error) {
         console.error('Auth error:', error);
-        if (error.code === 'auth/popup-blocked') {
-            showErrorMessage('Please enable popups for this site');
-        } else {
-            showErrorMessage(error.message);
-        }
+        showErrorMessage(error.message);
     }
 });
+function generateReferralCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+}
 
 const standardChartConfig = {
     responsive: true,
@@ -547,11 +600,15 @@ const isAdmin = async (userId) => {
 };
 
 auth.onAuthStateChanged(async (user) => {
-    console.log('==== AUTH STATE CHANGE START ====');
-    console.log('Previous state:', { currentUser, portfolio });
-    
     try {
         if (user) {
+            const urlParams = new URLSearchParams(window.location.search);
+            const referralCode = urlParams.get('ref');
+            
+            if (referralCode) {
+                // Store referral code for processing during sign up
+                localStorage.setItem('pendingReferral', referralCode);
+            }
             const userDoc = await db.collection('users').doc(user.uid).get();
             console.log('Fetched user data:', userDoc.data());
             
@@ -1708,22 +1765,24 @@ async function createMarket() {
 
 
 
-function showSuccessMessage(message) {
-    const toast = document.createElement('div');
-    toast.className = 'fixed bottom-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg animate__animated animate__fadeInUp';
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 3000);
-}
 
 function showErrorMessage(message) {
-    const toast = document.createElement('div');
-    toast.className = 'fixed bottom-4 right-4 bg-red-500 text-white px-6 py-3 rounded-lg shadow-lg animate__animated animate__fadeInUp';
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 3000);
+    const errorDiv = document.getElementById('error-message');
+    if (errorDiv) {
+        errorDiv.textContent = message;
+        errorDiv.classList.remove('hidden');
+        setTimeout(() => errorDiv.classList.add('hidden'), 5000);
+    }
 }
 
+function showSuccessMessage(message) {
+    const successDiv = document.createElement('div');
+    successDiv.className = 'fixed bottom-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg animate__animated animate__fadeInUp';
+    successDiv.textContent = message;
+    
+    document.body.appendChild(successDiv);
+    setTimeout(() => successDiv.remove(), 3000);
+}
 async function loadAdminMarkets() {
     const marketsContainer = document.getElementById('admin-markets-list');
     if (!marketsContainer) return;
@@ -3802,20 +3861,22 @@ document.getElementById('logout-button').addEventListener('click', async () => {
         console.error('Logout error:', error);
     }
 });
-document.getElementById('auth-container').querySelector('.modal-content form').innerHTML = `
-    <div class="space-y-4">
-        <input type="email" id="email" placeholder="Email" required class="w-full p-2 rounded">
-        <input type="password" id="password" placeholder="Password" required class="w-full p-2 rounded">
-        <input type="text" id="username" placeholder="Username" class="w-full p-2 rounded hidden">
-        <div id="error-message" class="text-red-400 hidden"></div>
-        <button type="submit" class="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700">
-            <span id="auth-button-text">Login</span>
-        </button>
-        <button type="button" id="toggle-auth" class="w-full text-sm text-gray-400 hover:text-blue-300">
-            Don't have an account? Sign up
-        </button>
-    </div>
-`;
+async function copyReferralLink(referralUrl) {
+    try {
+        await navigator.clipboard.writeText(referralUrl);
+        showSuccessMessage('Referral link copied to clipboard!');
+    } catch (error) {
+        console.error('Error copying link:', error);
+        // Fallback for browsers that don't support clipboard API
+        const tempInput = document.createElement('input');
+        tempInput.value = referralUrl;
+        document.body.appendChild(tempInput);
+        tempInput.select();
+        document.execCommand('copy');
+        document.body.removeChild(tempInput);
+        showSuccessMessage('Referral link copied to clipboard!');
+    }
+}
 const profileSection = `
 <div class="space-y-6">
     <h3 class="text-xl font-semibold text-blue-300 mb-4">Account Settings</h3>
@@ -3884,6 +3945,8 @@ function loadProfileData() {
     const profileTab = document.getElementById('profile-tab');
     if (!profileTab) return;
 
+    const referralUrl = `${window.location.origin}?ref=${currentUser.referralCode}`;
+    
     profileTab.innerHTML = `
         <div class="market-card p-6 rounded-lg">
             <div class="flex items-center justify-between mb-8">
@@ -3951,8 +4014,8 @@ function loadProfileData() {
                         <div class="text-gray-400 mb-2">Your Referral Code:</div>
                         <div class="flex items-center gap-2">
                             <span class="text-lg font-mono text-blue-300">${currentUser.referralCode}</span>
-                            <button onclick="copyReferralLink('${window.location.origin}?ref=${currentUser.referralCode}')"
-                                    class="text-blue-400 hover:text-blue-300 transition-colors">
+                            <button onclick="copyReferralLink('${referralUrl}')" 
+                                    class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg transition-colors">
                                 Copy Link
                             </button>
                         </div>
@@ -3962,7 +4025,6 @@ function loadProfileData() {
                     </div>
                 </div>
             </div>
-        </div>
     `;
 
     // Reattach admin panel button handler if needed
