@@ -738,16 +738,16 @@
     </div>
 
 <script>
+require('dotenv').config();
 const firebaseConfig = {
-    apiKey: "API_KEY",
-    authDomain: "polyclone-charlito.firebaseapp.com",
-    projectId: "polyclone-charlito",
-    storageBucket: "polyclone-charlito.firebasestorage.app",
-    messagingSenderId: "33888100969",
-    appId: "1:33888100969:web:460f59f56be799600d38f8",
-    measurementId: "G-RLPKRSNF6Q"
+    apiKey: process.env.FIREBASE_API_KEY,
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.FIREBASE_APP_ID,
+    measurementId: process.env.FIREBASE_MEASUREMENT_ID,
 };
-
 const DEFAULT_PROFILE_PIC = "https://polymarket.com/_next/image?url=https%3A%2F%2Fpolymarket-upload.s3.us-east-2.amazonaws.com%2F31669764_829bfb7d-c27d-4c9a-8b78-dd9135282938_1730892972459.png&w=256&q=100";
 const app = firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
