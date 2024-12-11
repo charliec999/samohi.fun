@@ -607,7 +607,7 @@ const provider = new firebase.auth.GoogleAuthProvider();
 provider.setCustomParameters({
     'hd': 'smmk12.org',
 });
-document.addEventListener('DOMContentLoaded', initializeOfflineProtection);
+
 document.getElementById('google-signin')?.addEventListener('click', async () => {
     try {
         const referralCode = document.getElementById('referral-code')?.value?.trim();
@@ -2086,15 +2086,6 @@ function formatCommentTimestamp(timestamp) {
         day: 'numeric'
     });
 }
-function initializeOfflineProtection() {
-    // Check if we're offline on page load
-    if (!navigator.onLine) {
-        document.querySelectorAll('.bet-yes, .bet-no').forEach(button => {
-            button.disabled = true;
-            button.classList.add('opacity-50');
-        });
-    }
-}
 function showQuickPriceUpdate(marketId, currentPrice) {
     const modal = document.createElement('div');
     modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[60]';
@@ -2991,16 +2982,13 @@ document.querySelectorAll('[data-tab]').forEach(button => {
 
 async function placeBet(marketId, position) {
     try {
-        // First check if we're online
-        if (!navigator.onLine) {
-            showErrorMessage('Internet connection required to place bets');
-            return;
-        }
-
         if (!auth.currentUser) {
             showErrorMessage('Please sign in to place bets');
             return;
         }
+
+        const market = markets.find(m => m.id === marketId);
+        if (!market) throw new Error('Market not found');
 
         const amount = parseFloat(document.getElementById('bet-amount').value);
         if (isNaN(amount) || amount <= 0) {
@@ -3008,71 +2996,42 @@ async function placeBet(marketId, position) {
             return;
         }
 
-        // Start a transaction to ensure atomic updates
-        await db.runTransaction(async (transaction) => {
-            // Get fresh user data within transaction
-            const userRef = db.collection('users').doc(auth.currentUser.uid);
-            const userDoc = await transaction.get(userRef);
-            const userData = userDoc.data();
-            
-            // Verify user has sufficient funds
-            if (!userData || userData.funbucks < amount) {
-                throw new Error('Insufficient funds');
-            }
+        // Important: Use exact balance comparison
+        if (amount > portfolio.balance) {
+            showErrorMessage('Insufficient FunBucks');
+            return;
+        }
 
-            // Get fresh market data within transaction
-            const marketRef = db.collection('markets').doc(marketId);
-            const marketDoc = await transaction.get(marketRef);
-            const market = marketDoc.data();
-            
-            if (!market) {
-                throw new Error('Market not found');
-            }
+        const price = position === 'yes' 
+            ? Math.max(0.001, Math.min(0.999, market.currentPrice))
+            : Math.max(0.001, Math.min(0.999, 1 - market.currentPrice));
 
-            // Calculate shares and create bet object
-            const price = position === 'yes' 
-                ? Math.max(0.001, Math.min(0.999, market.currentPrice))
-                : Math.max(0.001, Math.min(0.999, 1 - market.currentPrice));
+        const shares = price > 0 ? amount / price : 0;
 
-            const shares = price > 0 ? amount / price : 0;
+        const bet = {
+            marketId,
+            position,
+            amount,
+            shares,
+            entryPrice: price,
+            date: new Date().toISOString(),
+            marketTitle: market.title,
+            marketImage: market.image
+        };
 
-            const bet = {
-                marketId,
-                position,
-                amount,
-                shares,
-                entryPrice: price,
+        // Update Firestore first with exact values
+        const userRef = db.collection('users').doc(auth.currentUser.uid);
+        await userRef.update({
+            funbucks: firebase.firestore.FieldValue.increment(-amount),
+            bets: firebase.firestore.FieldValue.arrayUnion(bet),
+            history: firebase.firestore.FieldValue.arrayUnion({
                 date: new Date().toISOString(),
-                marketTitle: market.title,
-                marketImage: market.image
-            };
-
-            // Update user data atomically
-            transaction.update(userRef, {
-                funbucks: firebase.firestore.FieldValue.increment(-amount),
-                bets: firebase.firestore.FieldValue.arrayUnion(bet),
-                history: firebase.firestore.FieldValue.arrayUnion({
-                    date: new Date().toISOString(),
-                    value: userData.funbucks - amount
-                })
-            });
-
-            // Record the bet in the bets collection
-            const betRef = db.collection('bets').doc();
-            transaction.set(betRef, {
-                marketId,
-                position,
-                amount,
-                price,
-                username: currentUser.username,
-                timestamp: Date.now(),
-                type: 'buy',
-                userId: auth.currentUser.uid
-            });
+                value: portfolio.balance - amount
+            })
         });
 
-        // Only update local state after successful transaction
-        portfolio.balance -= amount;
+        // Update local state with exact values
+        portfolio.balance = portfolio.balance - amount;
         portfolio.bets.push(bet);
         portfolio.history.push({
             date: new Date().toISOString(),
@@ -3083,55 +3042,23 @@ async function placeBet(marketId, position) {
         showSuccessMessage('Bet placed successfully!');
         await updatePortfolioDisplays();
         await updateMarkets();
+        await db.collection('bets').add({
+            marketId,
+            position,
+            amount,
+            price,
+            username: currentUser.username,
+            timestamp: Date.now(),
+            type: 'buy', // or 'sell' depending on the action
+            userId: auth.currentUser.uid
+        });
         await updateRecentActivity();
-
     } catch (error) {
         console.error('Error placing bet:', error);
         showErrorMessage(error.message || 'Failed to place bet');
-        
-        // Force refresh user data to ensure consistency
-        await loadUserData(auth.currentUser.uid);
-        await updatePortfolioDisplays();
     }
 }
-window.addEventListener('offline', () => {
-    // Disable all betting buttons when offline
-    document.querySelectorAll('.bet-yes, .bet-no').forEach(button => {
-        button.disabled = true;
-        button.classList.add('opacity-50');
-    });
-    showErrorMessage('You are offline. Betting is disabled.');
-});
-window.addEventListener('online', () => {
-    // Re-enable betting buttons when back online
-    document.querySelectorAll('.bet-yes, .bet-no').forEach(button => {
-        button.disabled = false;
-        button.classList.remove('opacity-50');
-    });
-    
-    // Refresh user data to ensure consistency
-    if (auth.currentUser) {
-        loadUserData(auth.currentUser.uid);
-    }
-});
-async function verifyAccountConsistency() {
-    if (!auth.currentUser || !navigator.onLine) return;
 
-    try {
-        const userDoc = await db.collection('users').doc(auth.currentUser.uid).get();
-        const userData = userDoc.data();
-        
-        // If local data differs from server data, refresh from server
-        if (userData.funbucks !== portfolio.balance || 
-            JSON.stringify(userData.bets) !== JSON.stringify(portfolio.bets)) {
-            await loadUserData(auth.currentUser.uid);
-            await updatePortfolioDisplays();
-        }
-    } catch (error) {
-        console.error('Error verifying account consistency:', error);
-    }
-}
-setInterval(verifyAccountConsistency, 30000);
 function calculateNetworth(userData = null) {
     // If no userData passed, use current portfolio
     if (!userData) {
