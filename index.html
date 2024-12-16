@@ -1502,17 +1502,17 @@
                                 <div class="bg-gray-800 p-4 rounded-xl">
                                     <div class="text-sm text-gray-400 mb-2">Mines Count</div>
                                     <div class="grid grid-cols-3 gap-2">
-                                        <button onclick="MINES.setMines(5)" 
+                                        <button onclick="MINES.setMines(3)" 
                                                 class="p-2 bg-blue-600 hover:bg-blue-700 rounded text-white text-sm mines-btn active">
+                                                3
+                                        </button>
+                                        <button onclick="MINES.setMines(5)" 
+                                                class="p-2 bg-blue-600 hover:bg-blue-700 rounded text-white text-sm mines-btn">
                                                 5
                                         </button>
                                         <button onclick="MINES.setMines(7)" 
                                                 class="p-2 bg-blue-600 hover:bg-blue-700 rounded text-white text-sm mines-btn">
                                                 7
-                                        </button>
-                                        <button onclick="MINES.setMines(9)" 
-                                                class="p-2 bg-blue-600 hover:bg-blue-700 rounded text-white text-sm mines-btn">
-                                                9
                                         </button>
                                     </div>
                                 </div>
@@ -3383,7 +3383,7 @@ const MINES = {
     mineLocations: [],
     revealedCells: [], 
     gameInProgress: false,
-    mineCount: 3,
+    mineCount: 1,
     currentMultiplier: 1.0,
     betAmount: 0,
     clickLock: false,
@@ -3473,7 +3473,7 @@ const MINES = {
         multiplier *= (safeSpots - i) / (25 - i);
     }
     
-    return 0.35 / multiplier;
+    return 0.4 / multiplier;
 },
 
    async revealCell(index) {
